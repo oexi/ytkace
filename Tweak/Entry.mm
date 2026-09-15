@@ -27,6 +27,7 @@ static void YTKACEInstallModules(void) {
     YTKACEInstallSleepTimerHooks();
     YTKACEInstallPiPHooks();
     YTKACEInstallPlaybackFixHooks();
+    YTKACEInstallSimplifiedChineseCaptionHooks();
     YTKACEInstallDownloadHooks();
     YTKACEInstallGlobalDownloadMiniPlayer();
     YTKACEInstallDoubleTapHooks();

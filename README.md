@@ -7,7 +7,7 @@ An open-source YouTube enhancement for iOS.
 | Area | Included |
 |---|---|
 | Downloads | Video, audio and Shorts downloads; queues; sorting; backup and restore |
-| Playback | Background playback, PiP, loop, speed controls, default speed, gestures and tap to seek |
+| Playback | Background playback, PiP, loop, speed controls, default speed, gestures, tap to seek, and Simplified Chinese auto-translate |
 | SponsorBlock | Category controls, progress markers, skip modes and configurable alerts |
 | Interface | OLED mode, overlay controls, navigation cleanup and native share sheets |
 | Tabs | Hide, reorder and add YouTube destinations |

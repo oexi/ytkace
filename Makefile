@@ -39,6 +39,7 @@ YTKACE_FILES = \
 	Tweak/Features/Playback/BackgroundPlaybackHooks.mm \
 	Tweak/Features/Playback/PiPControls.mm \
 	Tweak/Features/Playback/PlaybackFixHooks.mm \
+	Tweak/Features/Playback/SimplifiedChineseCaptions.mm \
 	Tweak/Features/Playback/SpeedControls.mm \
 	Tweak/Features/Playback/LoopControls.mm \
 	Tweak/Features/Playback/SleepTimerControls.mm \
@@ -75,7 +76,7 @@ YTKACE_CFLAGS += -DYTKACE_COMBINED_SABR=1
 YTKACE_CFLAGS += -Wno-module-import-in-extern-c
 YTKACE_CFLAGS += -I$(THEOS_PROJECT_DIR)/Vendor/FFmpeg/include
 YTKACE_CCFLAGS = -std=c++17
-YTKACE_FRAMEWORKS = Foundation UIKit AVFoundation AVKit AudioToolbox Photos QuartzCore MediaPlayer Security SystemConfiguration UniformTypeIdentifiers VideoToolbox CoreMedia
+YTKACE_FRAMEWORKS = Foundation CoreFoundation UIKit AVFoundation AVKit AudioToolbox Photos QuartzCore MediaPlayer Security SystemConfiguration UniformTypeIdentifiers VideoToolbox CoreMedia
 YTKACE_LIBRARIES = z
 YTKACE_LDFLAGS = -Wl,-install_name,@rpath/YTKACE.dylib
 YTKACE_LDFLAGS += $(THEOS_PROJECT_DIR)/Vendor/FFmpeg/lib/libavformat.a

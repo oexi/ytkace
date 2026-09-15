@@ -281,6 +281,7 @@ static void YTKACECaptionTracksSetter(id receiver, SEL selector, id tracks) {
 }
 
 static void YTKACECaptionTrackSetter(id receiver, SEL selector, id track) {
+    YTKACEPrepareCaptionTrackForSelection(track);
     IMP original = YTKACEMiscOriginal(receiver, selector);
     if (original != NULL) {
         ((void (*)(id, SEL, id))original)(receiver, selector, track);
@@ -291,6 +292,7 @@ static void YTKACECaptionSelectedTrackSetter(id receiver,
                                              SEL selector,
                                              id track,
                                              NSInteger reason) {
+    YTKACEPrepareCaptionTrackForSelection(track);
     IMP original = YTKACEMiscOriginal(receiver, selector);
     if (original != NULL) {
         ((void (*)(id, SEL, id, NSInteger))original)(receiver,

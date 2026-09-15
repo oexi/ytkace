@@ -60,3 +60,5 @@ void YTKACEScheduleFirstLaunch(void);
 
 NS_ASSUME_NONNULL_END
 void YTKACEInstallPlaybackFixHooks(void);
+void YTKACEInstallSimplifiedChineseCaptionHooks(void);
+void YTKACEPrepareCaptionTrackForSelection(id _Nullable track);
