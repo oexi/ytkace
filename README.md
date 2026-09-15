@@ -40,13 +40,21 @@ https://itzzace.github.io/ytkace/
 Rootless and roothide packages are both published. The repository page also has an
 [Add to Sileo](https://itzzace.github.io/ytkace/) button.
 
-**Sideloaded.** Download the IPA for your iOS version from the [latest release](https://github.com/itzzace/ytkace/releases/latest) and install it with TrollStore, AltStore, SideStore or LiveContainer.
+**Sideloaded.** Download the IPA for your iOS version from the [latest release](https://github.com/oexi/ytkace/releases/latest) and install it with TrollStore, AltStore, SideStore or LiveContainer.
+
+**AltStore source.** Add this URL in AltStore's Sources tab:
+
+```
+https://github.com/oexi/ytkace/releases/latest/download/altstore-source.json
+```
+
+The IPA workflow publishes or refreshes the matching GitHub Release and regenerates this AltStore source automatically from the built IPA metadata.
 
 ## Build
 
 Fork the repository, enable Actions, open the **IPA** workflow and provide a direct link to a decrypted YouTube IPA you are legally allowed to use. The completed workflow provides the injected IPA as an artifact. The **Deb** workflow builds the tweak package.
 
-To build both IPAs in one run, fill in the second URL field as well: the workflow takes an iOS 16 base (21.33.6) and an optional iOS 17+ base (21.36.6), and uploads them as separate artifacts. Leaving the second field empty builds a single IPA.
+To build both IPAs in one run, fill in the second URL field as well: the workflow takes an iOS 16 base (21.33.6) and an optional iOS 17+ base (21.36.6), and uploads them as separate artifacts. Leaving the second field empty builds a single IPA. Successful runs also create or update the `v<YTKACE version>` release, attach the IPA files, and publish `altstore-source.json` as a release asset.
 
 ## Settings
 

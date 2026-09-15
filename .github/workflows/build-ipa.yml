@@ -15,7 +15,7 @@ on:
         type: string
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -98,12 +98,16 @@ jobs:
               print(plistlib.loads(archive.read(info))['CFBundleShortVersionString'])
           PY
           )"
+          bundle_build_version="$(python3 Tools/altstore.py bundle-build-version \
+            --youtube-version "$youtube_version" \
+            --ytkace-version "$tweak_version")"
           if [ "${{ matrix.target.label }}" = "ios16" ]; then
             output="YTKACE_${tweak_version}_YouTube_iOS16_${youtube_version}.ipa"
           else
             output="YTKACE_${tweak_version}_YouTube_${youtube_version}.ipa"
           fi
-          bash Scripts/sideload-repack.sh YouTube.ipa deb-root/var/jb/Library/MobileSubstrate/DynamicLibraries/YTKACE.dylib "$output"
+          YTKACE_BUNDLE_BUILD_VERSION="$bundle_build_version" \
+            bash Scripts/sideload-repack.sh YouTube.ipa deb-root/var/jb/Library/MobileSubstrate/DynamicLibraries/YTKACE.dylib "$output"
           bash Tools/verify-artifacts.sh deb-root/var/jb/Library/MobileSubstrate/DynamicLibraries/YTKACE.dylib "$output"
           echo "ipa=$output" >> "$GITHUB_OUTPUT"
 
@@ -112,3 +116,68 @@ jobs:
           name: YTKACE-IPA-${{ matrix.target.label }}
           path: ${{ steps.inject.outputs.ipa }}
           if-no-files-found: error
+
+  publish:
+    needs: package
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: YTKACE-IPA-*
+          merge-multiple: true
+          path: dist
+
+      - name: Setup
+        run: brew install ldid
+
+      - name: Release metadata
+        id: metadata
+        run: |
+          version="$(awk '/^Version:/ {print $2}' control)"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+
+      - name: Create or update release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.metadata.outputs.tag }}
+          VERSION: ${{ steps.metadata.outputs.version }}
+        run: |
+          notes="Automated IPA builds for YTKACE v$VERSION. AltStore source: https://github.com/$GITHUB_REPOSITORY/releases/latest/download/altstore-source.json"
+          git tag --force "$TAG" "$GITHUB_SHA"
+          git push --force origin "refs/tags/$TAG"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" --title "YTKACE v$VERSION" --notes "$notes" --latest
+          else
+            gh release create "$TAG" \
+              --verify-tag \
+              --title "YTKACE v$VERSION" \
+              --notes "$notes" \
+              --latest
+          fi
+          gh release upload "$TAG" dist/*.ipa --clobber
+
+      - name: Generate AltStore source
+        env:
+          TAG: ${{ steps.metadata.outputs.tag }}
+          VERSION: ${{ steps.metadata.outputs.version }}
+        run: |
+          args=()
+          for ipa in dist/*.ipa; do
+            args+=(--ipa "$ipa")
+          done
+          python3 Tools/altstore.py source \
+            "${args[@]}" \
+            --repository "$GITHUB_REPOSITORY" \
+            --tag "$TAG" \
+            --ytkace-version "$VERSION" \
+            --output dist/altstore-source.json
+          python3 -m json.tool dist/altstore-source.json >/dev/null
+
+      - name: Publish AltStore source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.metadata.outputs.tag }}
+        run: gh release upload "$TAG" dist/altstore-source.json --clobber

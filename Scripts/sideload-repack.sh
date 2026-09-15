@@ -45,6 +45,20 @@ rm -rf "$APP/_CodeSignature"
 find "$APP" -maxdepth 1 -type f \( -name 'YTK@*' -o -name 'YTK-*' \) -delete
 python3 "$ROOT/Tools/sanitize_plist.py" "$APP/Info.plist"
 
+if [[ -n "${YTKACE_BUNDLE_BUILD_VERSION:-}" ]]; then
+  python3 - "$APP/Info.plist" "$YTKACE_BUNDLE_BUILD_VERSION" <<'PY'
+import plistlib
+import sys
+
+path, build_version = sys.argv[1:]
+with open(path, "rb") as handle:
+    info = plistlib.load(handle)
+info["CFBundleVersion"] = build_version
+with open(path, "wb") as handle:
+    plistlib.dump(info, handle, fmt=plistlib.FMT_BINARY, sort_keys=False)
+PY
+fi
+
 python3 "$ROOT/Tools/macho_inject.py" "$MAIN" \
   --add-load '@rpath/YTKACE.dylib'
 
