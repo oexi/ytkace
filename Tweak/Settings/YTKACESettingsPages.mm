@@ -1507,8 +1507,8 @@ static NSDictionary *YTKACEStreamingOptionsDefinition(void) {
         @[
             YTKACEToggle(@"Stop Autoplay", @"YTKACE.Preference.Playback.AutoplayDisabled", @"", @""),
             YTKACEToggle(@"HD on Mobile Data", @"YTKACE.Preference.Playback.HDOnCellular", @"", @""),
-            YTKACEToggleDetail(@"Simplified Chinese Auto-Translate",
-                @"Adds Simplified Chinese to YouTube auto-translate while keeping Traditional Chinese available.",
+            YTKACEToggleDetail(@"Chinese Auto-Translate Fix",
+                @"Adds the missing Simplified Chinese option to the iOS app and fixes delayed or misaligned Traditional Chinese auto-translate.",
                 @"YTKACE.Preference.Playback.SimplifiedChineseAutoTranslate")
         ]
     ], @[YTKACELocalized(@"QUALITY"), YTKACELocalized(@"DOUBLE TAP"), YTKACELocalized(@"AUTOPLAY & DATA")]);

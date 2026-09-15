@@ -20,6 +20,7 @@ static NSMutableSet<NSString *> *YTKACEChineseCaptionInstalledHooks;
 static const void *YTKACETraditionalCaptionTrackAssociation =
     &YTKACETraditionalCaptionTrackAssociation;
 static std::atomic_bool YTKACETraditionalCaptionProxyActive(false);
+static IMP YTKACEOriginalAutoTranslationCaptionTrack;
 
 static NSString *YTKACEChineseCaptionHookKey(Class cls, SEL selector) {
     return [NSString stringWithFormat:@"%@|%@", NSStringFromClass(cls),
@@ -174,6 +175,7 @@ static NSString *YTKACERewriteTranslationURL(NSString *URLString,
     NSMutableArray<NSString *> *items = [NSMutableArray arrayWithCapacity:rawItems.count + 1];
     BOOL foundTraditional = NO;
     BOOL markerPresent = NO;
+    BOOL changed = NO;
 
     for (NSString *item in rawItems) {
         NSString *name = YTKACEQueryItemName(item);
@@ -182,26 +184,35 @@ static NSString *YTKACERewriteTranslationURL(NSString *URLString,
             YTKACEIsTraditionalChineseCode(value)) {
             [items addObject:@"tlang=zh-Hans"];
             foundTraditional = YES;
+            changed = YES;
             continue;
         }
         if ([name caseInsensitiveCompare:YTKACETraditionalProxyMarkerName] == NSOrderedSame) {
             if (markTraditionalProxy) {
-                [items addObject:[NSString stringWithFormat:@"%@=%@",
-                    YTKACETraditionalProxyMarkerName, YTKACETraditionalProxyMarkerValue]];
+                NSString *marker = [NSString stringWithFormat:@"%@=%@",
+                    YTKACETraditionalProxyMarkerName, YTKACETraditionalProxyMarkerValue];
+                [items addObject:marker];
                 markerPresent = YES;
+                if (![item isEqualToString:marker]) changed = YES;
+            } else {
+                changed = YES;
             }
             continue;
         }
         [items addObject:item];
     }
 
-    if (!foundTraditional) return URLString;
-    if (matchedTraditional != NULL) *matchedTraditional = YES;
-    if (markTraditionalProxy && !markerPresent) {
+    if (markTraditionalProxy && foundTraditional && !markerPresent) {
         [items addObject:[NSString stringWithFormat:@"%@=%@",
             YTKACETraditionalProxyMarkerName, YTKACETraditionalProxyMarkerValue]];
+        markerPresent = YES;
+        changed = YES;
     }
 
+    if (matchedTraditional != NULL) {
+        *matchedTraditional = foundTraditional || markerPresent;
+    }
+    if (!changed) return URLString;
     return [NSString stringWithFormat:@"%@%@%@",
         prefix, [items componentsJoinedByString:@"&"], fragment];
 }
@@ -383,6 +394,89 @@ static id YTKACETranslationLanguages(id receiver, SEL selector) {
     return augmented;
 }
 
+static id YTKACECopyTranslationTargetWithLanguageCode(id target,
+                                                        NSString *languageCode) {
+    if ([target isKindOfClass:NSString.class]) return languageCode;
+    if (target == nil || languageCode.length == 0) return target;
+
+    id copy = nil;
+    if ([target isKindOfClass:NSDictionary.class]) {
+        copy = [target mutableCopy];
+    } else {
+        @try {
+            if ([target respondsToSelector:@selector(copyWithZone:)]) {
+                copy = [target copy];
+            }
+        } @catch (__unused NSException *exception) {
+            copy = nil;
+        }
+    }
+    if (copy == nil) return target;
+
+    for (NSString *key in @[@"languageCode", @"language_code",
+                             @"targetLanguageCode", @"targetLanguage",
+                             @"targetLang", @"language", @"code"]) {
+        id current = YTKACESafeValue(copy, key);
+        if (current != nil || [key isEqualToString:@"languageCode"]) {
+            if (YTKACESafeSetValue(copy, key, languageCode)) return copy;
+        }
+    }
+    return target;
+}
+
+static id YTKACEAutoTranslationCaptionTrack(id receiver,
+                                             SEL selector,
+                                             id audioTrackData,
+                                             id translateTarget) {
+    BOOL enabled = YTKACEFeatureEnabled(YTKACESimplifiedChineseAutoTranslateKey);
+    BOOL traditional = enabled &&
+        YTKACEIsTraditionalChineseCode(YTKACELanguageCodeForEntry(translateTarget));
+    id effectiveTarget = traditional
+        ? YTKACECopyTranslationTargetWithLanguageCode(translateTarget, @"zh-Hans")
+        : translateTarget;
+
+    id result = YTKACEOriginalAutoTranslationCaptionTrack != NULL
+        ? ((id (*)(id, SEL, id, id))YTKACEOriginalAutoTranslationCaptionTrack)(
+            receiver, selector, audioTrackData, effectiveTarget)
+        : nil;
+
+    if (traditional && result != nil) {
+        // Preserve the user's Traditional Chinese choice while using the
+        // Simplified Chinese translation path that has correct cue timing.
+        objc_setAssociatedObject(result,
+                                 YTKACETraditionalCaptionTrackAssociation,
+                                 @YES,
+                                 OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        // Fallback for app builds where translateTarget cannot be cloned.
+        YTKACEUpdateTranslationEntryURL(result, YES);
+    }
+    return result;
+}
+
+static void YTKACEInstallAutoTranslationCaptionTrackHook(void) {
+    if (YTKACEOriginalAutoTranslationCaptionTrack != NULL) return;
+
+    NSString *className = @"YTIPlayerCaptionsTrackListRenderer";
+    NSString *selectorName =
+        @"autoTranslationCaptionTrackForAudioTrackData:translateTarget:";
+    Class cls = NSClassFromString(className);
+    SEL selector = NSSelectorFromString(selectorName);
+    Method method = cls == Nil ? NULL : class_getInstanceMethod(cls, selector);
+    if (method == NULL || method_getNumberOfArguments(method) != 4) return;
+
+    char returnType[16] = {0};
+    method_getReturnType(method, returnType, sizeof(returnType));
+    if (returnType[0] != '@') return;
+
+    IMP original = NULL;
+    if (YTKACEInstallInstanceHook(className,
+                                  selectorName,
+                                  (IMP)YTKACEAutoTranslationCaptionTrack,
+                                  &original) && original != NULL) {
+        YTKACEOriginalAutoTranslationCaptionTrack = original;
+    }
+}
+
 static id YTKACEPrepareChineseCaptionTrack(id track) {
     if (track == nil || !YTKACEFeatureEnabled(YTKACESimplifiedChineseAutoTranslateKey)) {
         return track;
@@ -522,6 +616,7 @@ void YTKACEInstallSimplifiedChineseCaptionHooks(void) {
         YTKACEChineseCaptionOriginals = [NSMutableDictionary dictionary];
         YTKACEChineseCaptionInstalledHooks = [NSMutableSet set];
 
+        YTKACEInstallAutoTranslationCaptionTrackHook();
         YTKACEDiscoverChineseCaptionHooks();
         [NSNotificationCenter.defaultCenter
             addObserverForName:UIApplicationDidBecomeActiveNotification
@@ -533,6 +628,7 @@ void YTKACEInstallSimplifiedChineseCaptionHooks(void) {
                     dispatch_time(DISPATCH_TIME_NOW,
                                   (int64_t)(delay.doubleValue * NSEC_PER_SEC)),
                     dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+                        YTKACEInstallAutoTranslationCaptionTrackHook();
                         YTKACEDiscoverChineseCaptionHooks();
                     });
             }

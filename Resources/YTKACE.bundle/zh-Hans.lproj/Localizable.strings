@@ -706,5 +706,5 @@ Licensed under CC BY-NC-SA 4.0." = "YTKACE 使用 SponsorBlock 数据。
 "minutes" = "分钟";
 "End of video" = "视频结束时";
 "OK" = "好的";
-"Simplified Chinese Auto-Translate" = "简体中文自动翻译";
-"Adds Simplified Chinese to YouTube auto-translate while keeping Traditional Chinese available." = "在 YouTube 自动翻译中添加简体中文，同时保留繁体中文。";
+"Chinese Auto-Translate Fix" = "中文自动翻译修复";
+"Adds the missing Simplified Chinese option to the iOS app and fixes delayed or misaligned Traditional Chinese auto-translate." = "为 YouTube iOS 自动翻译补充缺失的简体中文选项，并修复繁体中文字幕延迟或不同步。";

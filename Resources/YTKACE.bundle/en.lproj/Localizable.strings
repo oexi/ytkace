@@ -703,5 +703,5 @@ Licensed under CC BY-NC-SA 4.0.";
 "minutes" = "minutes";
 "End of video" = "End of video";
 "OK" = "OK";
-"Simplified Chinese Auto-Translate" = "Simplified Chinese Auto-Translate";
-"Adds Simplified Chinese to YouTube auto-translate while keeping Traditional Chinese available." = "Adds Simplified Chinese to YouTube auto-translate while keeping Traditional Chinese available.";
+"Chinese Auto-Translate Fix" = "Chinese Auto-Translate Fix";
+"Adds the missing Simplified Chinese option to the iOS app and fixes delayed or misaligned Traditional Chinese auto-translate." = "Adds the missing Simplified Chinese option to the iOS app and fixes delayed or misaligned Traditional Chinese auto-translate.";
