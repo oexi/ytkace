@@ -122,6 +122,8 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
       - uses: actions/download-artifact@v8
         with:
@@ -139,22 +141,39 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "tag=v$version" >> "$GITHUB_OUTPUT"
 
+      - name: Generate release notes
+        env:
+          VERSION: ${{ steps.metadata.outputs.version }}
+        run: |
+          git remote add upstream-release https://github.com/itzzace/ytkace.git
+          git fetch --no-tags upstream-release main
+          base="$(git merge-base "$GITHUB_SHA" upstream-release/main)"
+          python3 Tools/release_notes.py \
+            --base "$base" \
+            --head "$GITHUB_SHA" \
+            --version "$VERSION" \
+            --repository "$GITHUB_REPOSITORY" \
+            --output dist/release-notes.md
+          cat dist/release-notes.md
+
       - name: Create or update release
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.metadata.outputs.tag }}
           VERSION: ${{ steps.metadata.outputs.version }}
         run: |
-          notes="Automated IPA builds for YTKACE v$VERSION. AltStore source: https://github.com/$GITHUB_REPOSITORY/releases/latest/download/altstore-source.json"
           git tag --force "$TAG" "$GITHUB_SHA"
           git push --force origin "refs/tags/$TAG"
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release edit "$TAG" --title "YTKACE v$VERSION" --notes "$notes" --latest
+            gh release edit "$TAG" \
+              --title "YTKACE v$VERSION" \
+              --notes-file dist/release-notes.md \
+              --latest
           else
             gh release create "$TAG" \
               --verify-tag \
               --title "YTKACE v$VERSION" \
-              --notes "$notes" \
+              --notes-file dist/release-notes.md \
               --latest
           fi
           gh release upload "$TAG" dist/*.ipa --clobber
