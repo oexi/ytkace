@@ -239,6 +239,26 @@ static BOOL YTKACEURLHasTraditionalProxyMarker(NSString *URLString) {
     return NO;
 }
 
+static NSString *YTKACEURLByEnsuringTraditionalProxyMarker(NSString *URLString) {
+    if (URLString.length == 0 || YTKACEURLHasTraditionalProxyMarker(URLString)) {
+        return URLString;
+    }
+
+    NSRange fragmentRange = [URLString rangeOfString:@"#"];
+    NSString *fragment = @"";
+    NSString *withoutFragment = URLString;
+    if (fragmentRange.location != NSNotFound) {
+        fragment = [URLString substringFromIndex:fragmentRange.location];
+        withoutFragment = [URLString substringToIndex:fragmentRange.location];
+    }
+
+    NSString *separator = [withoutFragment containsString:@"?"] ? @"&" : @"?";
+    NSString *marker = [NSString stringWithFormat:@"%@=%@",
+        YTKACETraditionalProxyMarkerName, YTKACETraditionalProxyMarkerValue];
+    return [NSString stringWithFormat:@"%@%@%@%@",
+        withoutFragment, separator, marker, fragment];
+}
+
 static NSArray *YTKACEURLBearingObjects(id entry) {
     if (entry == nil) return @[];
     NSMutableArray *objects = [NSMutableArray arrayWithObject:entry];
@@ -249,6 +269,43 @@ static NSArray *YTKACEURLBearingObjects(id entry) {
         }
     }
     return objects;
+}
+
+static void YTKACEMarkTraditionalProxyIdentity(id entry,
+                                                NSString *semanticLanguageCode) {
+    if (entry == nil) return;
+
+    objc_setAssociatedObject(entry,
+                             YTKACETraditionalCaptionTrackAssociation,
+                             @YES,
+                             OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+
+    NSString *languageCode = semanticLanguageCode.length != 0
+        ? semanticLanguageCode
+        : @"zh-Hant";
+    for (id object in YTKACEURLBearingObjects(entry)) {
+        // MLInnerTubeCaptionTrack exposes languageCode as readonly, but KVC
+        // can still update its backing ivar. Keeping the semantic language as
+        // zh-Hant lets copied/rebuilt track objects retain the user's choice
+        // while the URL continues to request zh-Hans for the corrected cues.
+        YTKACESafeSetValue(object, @"languageCode", languageCode);
+
+        for (NSString *key in @[@"baseUrl", @"baseURL", @"URL", @"url"]) {
+            id value = YTKACESafeValue(object, key);
+            if ([value isKindOfClass:NSString.class]) {
+                NSString *marked = YTKACEURLByEnsuringTraditionalProxyMarker(value);
+                if (![marked isEqualToString:value]) {
+                    YTKACESafeSetValue(object, key, marked);
+                }
+            } else if ([value isKindOfClass:NSURL.class]) {
+                NSString *absolute = [(NSURL *)value absoluteString];
+                NSString *marked = YTKACEURLByEnsuringTraditionalProxyMarker(absolute);
+                if (![marked isEqualToString:absolute]) {
+                    YTKACESafeSetValue(object, key, [NSURL URLWithString:marked]);
+                }
+            }
+        }
+    }
 }
 
 static BOOL YTKACEUpdateTranslationEntryURL(id entry, BOOL markTraditionalProxy) {
@@ -429,8 +486,9 @@ static id YTKACEAutoTranslationCaptionTrack(id receiver,
                                              id audioTrackData,
                                              id translateTarget) {
     BOOL enabled = YTKACEFeatureEnabled(YTKACESimplifiedChineseAutoTranslateKey);
+    NSString *requestedLanguageCode = YTKACELanguageCodeForEntry(translateTarget);
     BOOL traditional = enabled &&
-        YTKACEIsTraditionalChineseCode(YTKACELanguageCodeForEntry(translateTarget));
+        YTKACEIsTraditionalChineseCode(requestedLanguageCode);
     id effectiveTarget = traditional
         ? YTKACECopyTranslationTargetWithLanguageCode(translateTarget, @"zh-Hans")
         : translateTarget;
@@ -443,12 +501,7 @@ static id YTKACEAutoTranslationCaptionTrack(id receiver,
     if (traditional && result != nil) {
         // Preserve the user's Traditional Chinese choice while using the
         // Simplified Chinese translation path that has correct cue timing.
-        objc_setAssociatedObject(result,
-                                 YTKACETraditionalCaptionTrackAssociation,
-                                 @YES,
-                                 OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-        // Fallback for app builds where translateTarget cannot be cloned.
-        YTKACEUpdateTranslationEntryURL(result, YES);
+        YTKACEMarkTraditionalProxyIdentity(result, requestedLanguageCode);
     }
     return result;
 }
@@ -482,7 +535,8 @@ static id YTKACEPrepareChineseCaptionTrack(id track) {
         return track;
     }
 
-    BOOL proxy = YTKACEUpdateTranslationEntryURL(track, YES) ||
+    BOOL proxy = YTKACEIsTraditionalChineseCode(YTKACELanguageCodeForEntry(track)) ||
+                 YTKACEUpdateTranslationEntryURL(track, YES) ||
                  YTKACEObjectHasTraditionalProxyMarker(track);
     objc_setAssociatedObject(track,
                              YTKACETraditionalCaptionTrackAssociation,
