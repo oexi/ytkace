@@ -271,25 +271,14 @@ static NSArray *YTKACEURLBearingObjects(id entry) {
     return objects;
 }
 
-static void YTKACEMarkTraditionalProxyIdentity(id entry,
-                                                NSString *semanticLanguageCode) {
+static void YTKACEMarkTraditionalProxyIdentity(id entry) {
     if (entry == nil) return;
 
     objc_setAssociatedObject(entry,
                              YTKACETraditionalCaptionTrackAssociation,
                              @YES,
                              OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-
-    NSString *languageCode = semanticLanguageCode.length != 0
-        ? semanticLanguageCode
-        : @"zh-Hant";
     for (id object in YTKACEURLBearingObjects(entry)) {
-        // MLInnerTubeCaptionTrack exposes languageCode as readonly, but KVC
-        // can still update its backing ivar. Keeping the semantic language as
-        // zh-Hant lets copied/rebuilt track objects retain the user's choice
-        // while the URL continues to request zh-Hans for the corrected cues.
-        YTKACESafeSetValue(object, @"languageCode", languageCode);
-
         for (NSString *key in @[@"baseUrl", @"baseURL", @"URL", @"url"]) {
             id value = YTKACESafeValue(object, key);
             if ([value isKindOfClass:NSString.class]) {
@@ -501,7 +490,7 @@ static id YTKACEAutoTranslationCaptionTrack(id receiver,
     if (traditional && result != nil) {
         // Preserve the user's Traditional Chinese choice while using the
         // Simplified Chinese translation path that has correct cue timing.
-        YTKACEMarkTraditionalProxyIdentity(result, requestedLanguageCode);
+        YTKACEMarkTraditionalProxyIdentity(result);
     }
     return result;
 }
@@ -535,8 +524,12 @@ static id YTKACEPrepareChineseCaptionTrack(id track) {
         return track;
     }
 
-    BOOL proxy = YTKACEIsTraditionalChineseCode(YTKACELanguageCodeForEntry(track)) ||
-                 YTKACEUpdateTranslationEntryURL(track, YES) ||
+    // Always rewrite a native Traditional Chinese translation URL before the
+    // track is selected. Do not short-circuit this call based on languageCode:
+    // YouTube may otherwise keep requesting tlang=zh-Hant and bring back the
+    // delayed/misaligned cue timing we are fixing.
+    BOOL rewroteTraditionalURL = YTKACEUpdateTranslationEntryURL(track, YES);
+    BOOL proxy = rewroteTraditionalURL ||
                  YTKACEObjectHasTraditionalProxyMarker(track);
     objc_setAssociatedObject(track,
                              YTKACETraditionalCaptionTrackAssociation,
