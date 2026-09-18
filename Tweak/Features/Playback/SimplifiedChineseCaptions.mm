@@ -12,6 +12,8 @@
 
 static NSString * const YTKACESimplifiedChineseAutoTranslateKey =
     @"YTKACE.Preference.Playback.SimplifiedChineseAutoTranslate";
+static NSString * const YTKACEAllLanguageAutoTranslateKey =
+    @"YTKACE.Preference.Playback.AllLanguageAutoTranslate";
 static NSString * const YTKACETraditionalProxyMarkerName = @"origin_tlang";
 static NSString * const YTKACETraditionalProxyMarkerValue = @"zh-Hant";
 
@@ -21,6 +23,7 @@ static const void *YTKACETraditionalCaptionTrackAssociation =
     &YTKACETraditionalCaptionTrackAssociation;
 static std::atomic_bool YTKACETraditionalCaptionProxyActive(false);
 static IMP YTKACEOriginalAutoTranslationCaptionTrack;
+static const void *YTKACEFallbackTargetsAssociation = &YTKACEFallbackTargetsAssociation;
 
 static NSString *YTKACEChineseCaptionHookKey(Class cls, SEL selector) {
     return [NSString stringWithFormat:@"%@|%@", NSStringFromClass(cls),
@@ -390,11 +393,116 @@ static id YTKACECopySimplifiedChineseEntry(id traditionalEntry) {
     return copy;
 }
 
+// These are native protobuf objects, not dictionaries: YouTube passes each target
+// to autoTranslationCaptionTrackForAudioTrackData:translateTarget:.
+static NSArray *YTKACEFallbackTranslationLanguages(void) {
+    Class targetClass = NSClassFromString(@"YTITranslationTarget");
+    Class nameClass = NSClassFromString(@"YTIFormattedString");
+    SEL factory = NSSelectorFromString(@"formattedStringWithString:");
+    if (targetClass == Nil || ![nameClass respondsToSelector:factory]) return nil;
+    // Conservative fallback only when the player supplies no target list. Keep
+    // the server's complete list whenever one is available.
+    NSString *codes = @"af ak sq am ar hy as ay az bn eu be bho bs bg my ca ceb zh-Hans zh-Hant co hr cs da dv doi nl en eo et ee fil fi fr gl ka de el gn gu ht ha haw iw hi hmn hu is ig id ga it ja jv kn kk km rw ko kri ku ky lo la lv ln lt lg lb mk mg ms ml mt mi mr mn ne no ny or om ps fa pl pt pa qu ro ru sm sa gd sr sn sd si sk sl so st es su sw sv tg ta tt te th ti ts tr tk uk ur ug uz vi cy fy xh yi yo zu";
+    NSMutableArray *targets = [NSMutableArray array];
+    for (NSString *code in [codes componentsSeparatedByString:@" "]) {
+        id target = [targetClass new];
+        NSString *name = [NSLocale.currentLocale localizedStringForLanguageCode:code] ?: code;
+        id formatted = ((id (*)(id, SEL, id))objc_msgSend)(nameClass, factory, name);
+        if (formatted != nil && YTKACESafeSetValue(target, @"languageCode", code) &&
+            YTKACESafeSetValue(target, @"languageName", formatted)) {
+            [targets addObject:target];
+        }
+    }
+    return targets;
+}
+
+static BOOL YTKACEUsableTranslationSource(id entry) {
+    id raw = YTKACESafeValue(entry, @"baseURL");
+    if (![raw isKindOfClass:NSString.class]) return NO;
+    NSURL *URL = [NSURL URLWithString:raw];
+    NSString *host = URL.host.lowercaseString;
+    return [URL.scheme.lowercaseString isEqualToString:@"https"] &&
+        ([host isEqualToString:@"youtube.com"] || [host hasSuffix:@".youtube.com"]) &&
+        [URL.path isEqualToString:@"/api/timedtext"] &&
+        YTKACELanguageCodeForEntry(entry).length != 0;
+}
+
+static id YTKACEAllLanguageCaptionTracks(id receiver, SEL selector) {
+    IMP original = YTKACEChineseCaptionOriginal(receiver, selector);
+    id result = original ? ((id (*)(id, SEL))original)(receiver, selector) : nil;
+    if (!YTKACEFeatureEnabled(YTKACEAllLanguageAutoTranslateKey) ||
+        ![result isKindOfClass:NSArray.class]) return result;
+    NSMutableArray *tracks = [result mutableCopy];
+    for (NSUInteger index = 0; index < tracks.count; index++) {
+        id entry = tracks[index];
+        if (!YTKACEUsableTranslationSource(entry) ||
+            [YTKACESafeValue(entry, @"isTranslatable") boolValue]) continue;
+        // Never change the stored protobuf: disabling the feature restores the
+        // unmodified server response, and original subtitle URLs stay intact.
+        if (![entry respondsToSelector:@selector(copyWithZone:)]) continue;
+        id copy = [entry copy];
+        if (copy != entry && YTKACESafeSetValue(copy, @"isTranslatable", @YES)) {
+            tracks[index] = copy;
+        }
+    }
+    return tracks;
+}
+
+static id YTKACETranslationSourceIndices(id receiver, SEL selector) {
+    IMP original = YTKACEChineseCaptionOriginal(receiver, selector);
+    id result = original ? ((id (*)(id, SEL))original)(receiver, selector) : nil;
+    if (!YTKACEFeatureEnabled(YTKACEAllLanguageAutoTranslateKey)) return result;
+    id tracks = YTKACESafeValue(receiver, @"captionTracksArray");
+    if (![tracks isKindOfClass:NSArray.class]) return result;
+    id indices = [result respondsToSelector:@selector(copyWithZone:)] ? [result copy] : nil;
+    if (indices == nil) indices = [NSClassFromString(@"GPBInt32Array") new];
+    SEL countSEL = @selector(count);
+    SEL at = NSSelectorFromString(@"valueAtIndex:");
+    SEL add = NSSelectorFromString(@"addValue:");
+    if (indices == result || ![indices respondsToSelector:countSEL] ||
+        ![indices respondsToSelector:at] || ![indices respondsToSelector:add]) return result;
+    NSMutableSet *seen = [NSMutableSet set];
+    NSUInteger count = ((NSUInteger (*)(id, SEL))objc_msgSend)(indices, countSEL);
+    for (NSUInteger index = 0; index < count; index++) {
+        int32_t value = ((int32_t (*)(id, SEL, NSUInteger))objc_msgSend)(indices, at, index);
+        [seen addObject:@(value)];
+    }
+    for (NSUInteger index = 0; index < [tracks count] && index <= INT32_MAX; index++) {
+        if (YTKACEUsableTranslationSource(tracks[index]) && ![seen containsObject:@(index)]) {
+            ((void (*)(id, SEL, int32_t))objc_msgSend)(indices, add, (int32_t)index);
+        }
+    }
+    // Native sourceCaptionTrackForIndices:audioTrackData: still intersects these
+    // indices with the selected audio track; never select another dub's captions.
+    return indices;
+}
+
 static id YTKACETranslationLanguages(id receiver, SEL selector) {
     IMP original = YTKACEChineseCaptionOriginal(receiver, selector);
     id result = original != NULL
         ? ((id (*)(id, SEL))original)(receiver, selector)
         : nil;
+    if (YTKACEFeatureEnabled(YTKACEAllLanguageAutoTranslateKey) &&
+        [receiver isKindOfClass:NSClassFromString(@"YTIPlayerCaptionsTrackListRenderer")] &&
+        (result == nil || ([result isKindOfClass:NSArray.class] && [result count] == 0))) {
+        id tracks = YTKACESafeValue(receiver, @"captionTracksArray");
+        if ([tracks isKindOfClass:NSArray.class]) {
+            for (id track in tracks) {
+                if (YTKACEUsableTranslationSource(track)) {
+                    NSArray *fallback = objc_getAssociatedObject(receiver, YTKACEFallbackTargetsAssociation);
+                    if (fallback == nil) {
+                        fallback = YTKACEFallbackTranslationLanguages();
+                        if (fallback.count != 0) {
+                            objc_setAssociatedObject(receiver, YTKACEFallbackTargetsAssociation,
+                                                     fallback, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+                        }
+                    }
+                    result = fallback ?: result;
+                    break;
+                }
+            }
+        }
+    }
     if (!YTKACEFeatureEnabled(YTKACESimplifiedChineseAutoTranslateKey) ||
         ![result isKindOfClass:NSArray.class]) {
         return result;
@@ -577,16 +685,32 @@ static id YTKACECaptionSegmentText(id receiver, SEL selector) {
     return value;
 }
 
+static NSUInteger YTKACETranslationArrayCount(id receiver, SEL selector) {
+    NSString *name = NSStringFromSelector(selector);
+    NSString *getter = [name substringToIndex:name.length - @"_Count".length];
+    id array = YTKACESafeValue(receiver, getter);
+    return [array respondsToSelector:@selector(count)] ? [array count] : 0;
+}
+
+static BOOL YTKACEAutoTranslationEnabled(id receiver, SEL selector) {
+    if (YTKACEFeatureEnabled(YTKACEAllLanguageAutoTranslateKey)) return YES;
+    IMP original = YTKACEChineseCaptionOriginal(receiver, selector);
+    return original ? ((BOOL (*)(id, SEL))original)(receiver, selector) : NO;
+}
+
 static BOOL YTKACEInstallChineseCaptionHook(Class cls,
                                              SEL selector,
-                                             IMP replacement) {
+                                             IMP replacement,
+                                             char expectedReturn = '@') {
     if (cls == Nil || selector == NULL || replacement == NULL) return NO;
+    // Protobuf accessors are resolved lazily rather than listed as baseMethods.
+    (void)[cls instancesRespondToSelector:selector];
     Method method = class_getInstanceMethod(cls, selector);
     if (method == NULL || method_getNumberOfArguments(method) != 2) return NO;
 
     char returnType[16] = {0};
     method_getReturnType(method, returnType, sizeof(returnType));
-    if (returnType[0] != '@') return NO;
+    if (returnType[0] != expectedReturn) return NO;
 
     NSString *key = YTKACEChineseCaptionHookKey(cls, selector);
     @synchronized (YTKACEChineseCaptionInstalledHooks) {
@@ -610,6 +734,25 @@ static BOOL YTKACEInstallChineseCaptionHook(Class cls,
 }
 
 static void YTKACEDiscoverChineseCaptionHooks(void) {
+    Class renderer = NSClassFromString(@"YTIPlayerCaptionsTrackListRenderer");
+    YTKACEInstallChineseCaptionHook(renderer, NSSelectorFromString(@"captionTracksArray"),
+                                    (IMP)YTKACEAllLanguageCaptionTracks);
+    YTKACEInstallChineseCaptionHook(renderer,
+        NSSelectorFromString(@"defaultTranslationSourceTrackIndicesArray"),
+        (IMP)YTKACETranslationSourceIndices);
+    for (NSString *name in @[@"translationLanguagesArray_Count",
+                             @"defaultTranslationSourceTrackIndicesArray_Count"]) {
+        YTKACEInstallChineseCaptionHook(renderer, NSSelectorFromString(name),
+                                        (IMP)YTKACETranslationArrayCount, 'Q');
+    }
+    YTKACEInstallChineseCaptionHook(
+        NSClassFromString(@"YTColdConfigIosPlayerClientSharedConfigImpl"),
+        NSSelectorFromString(@"enableCaptionsAutoTranslationIosClient"),
+        (IMP)YTKACEAutoTranslationEnabled, 'B');
+    // 21.33 uses the monolithic config; newer builds also expose the split one.
+    YTKACEInstallChineseCaptionHook(NSClassFromString(@"YTColdConfig"),
+        NSSelectorFromString(@"iosPlayerClientSharedConfigEnableCaptionsAutoTranslationIosClient"),
+        (IMP)YTKACEAutoTranslationEnabled, 'B');
     int count = objc_getClassList(NULL, 0);
     if (count <= 0) return;
 

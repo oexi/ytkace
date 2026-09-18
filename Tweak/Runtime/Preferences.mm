@@ -109,6 +109,7 @@ void YTKACERegisterDefaults(void) {
         @"YTKACE.Preference.Shorts.LimitEnabled": @NO,
         @"YTKACE.Preference.Playback.Fix": @NO,
         @"YTKACE.Preference.Playback.SimplifiedChineseAutoTranslate": @YES,
+        @"YTKACE.Preference.Playback.AllLanguageAutoTranslate": @YES,
         @"YTKACE.Preference.Shorts.LimitCount": @20,
         @"YTKACE.Preference.Tabs.FrostedHidden": @NO,
         @"YTKACE.Preference.Playback.WiFiQuality": @0,

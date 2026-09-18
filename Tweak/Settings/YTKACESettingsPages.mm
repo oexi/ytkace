@@ -1509,7 +1509,10 @@ static NSDictionary *YTKACEStreamingOptionsDefinition(void) {
             YTKACEToggle(@"HD on Mobile Data", @"YTKACE.Preference.Playback.HDOnCellular", @"", @""),
             YTKACEToggleDetail(@"Chinese Auto-Translate Fix",
                 @"Adds the missing Simplified Chinese option to the iOS app and fixes delayed or misaligned Traditional Chinese auto-translate.",
-                @"YTKACE.Preference.Playback.SimplifiedChineseAutoTranslate")
+                @"YTKACE.Preference.Playback.SimplifiedChineseAutoTranslate"),
+            YTKACEToggleDetail(@"Auto-Translate All Caption Languages",
+                @"Enables native auto-translate for non-English captions. Requires an existing subtitle track. Reopen the video after changing this setting.",
+                @"YTKACE.Preference.Playback.AllLanguageAutoTranslate")
         ]
     ], @[YTKACELocalized(@"QUALITY"), YTKACELocalized(@"DOUBLE TAP"), YTKACELocalized(@"AUTOPLAY & DATA")]);
 }

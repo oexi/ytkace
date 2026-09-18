@@ -707,4 +707,6 @@ Licensed under CC BY-NC-SA 4.0." = "YTKACE 使用 SponsorBlock 数据。
 "End of video" = "视频结束时";
 "OK" = "好的";
 "Chinese Auto-Translate Fix" = "中文自动翻译修复";
+"Auto-Translate All Caption Languages" = "所有字幕语言自动翻译";
+"Enables native auto-translate for non-English captions. Requires an existing subtitle track. Reopen the video after changing this setting." = "为非英语字幕启用原生自动翻译。视频须已有字幕；更改后请重新打开视频。";
 "Adds the missing Simplified Chinese option to the iOS app and fixes delayed or misaligned Traditional Chinese auto-translate." = "为 YouTube iOS 自动翻译补充缺失的简体中文选项，并修复繁体中文字幕延迟或不同步。";
