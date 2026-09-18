@@ -706,6 +706,6 @@ Licensed under CC BY-NC-SA 4.0.";
 "Chinese Auto-Translate Fix" = "Chinese Auto-Translate Fix";
 "Chinese (Simplified)" = "Chinese (Simplified)";
 "Chinese (Traditional)" = "Chinese (Traditional)";
-"Auto-Translate All Caption Languages" = "Auto-Translate All Caption Languages";
+"Auto-Translate All Caption Languages" = "Extended Auto-Translate (All Languages)";
 "Overrides YouTube's auto-translate eligibility and language list for every video with an existing caption track. Reopen the video after changing this setting." = "Overrides YouTube's auto-translate eligibility and language list for every video with an existing caption track. Reopen the video after changing this setting.";
 "Adds the missing Simplified Chinese option to the iOS app and fixes delayed or misaligned Traditional Chinese auto-translate." = "Adds the missing Simplified Chinese option to the iOS app and fixes delayed or misaligned Traditional Chinese auto-translate.";

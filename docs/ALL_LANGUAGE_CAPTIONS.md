@@ -1,8 +1,9 @@
-# Full-coverage native auto-translation
+# Extended Auto-Translate (All Languages)
 
-The **Playback → Auto-Translate All Caption Languages** preference is enabled by
-default. Reopen the video after changing it. The separate Chinese Auto-Translate
-Fix preference continues to control Simplified/Traditional Chinese behavior.
+The **Playback → Extended Auto-Translate (All Languages)** preference is enabled
+by default. Reopen the video after changing it. The separate Chinese
+Auto-Translate Fix preference continues to control Simplified/Traditional
+Chinese behavior.
 
 When enabled, this feature takes over the iOS player's auto-translate eligibility,
 translation-source indices, and translation-target list for every video that has
@@ -54,7 +55,8 @@ Before releasing an IPA, test on-device with both supported YouTube versions:
    menu should appear.
 5. Multi-audio video: change audio tracks and confirm the source belongs to the
    selected audio track. Keep target-specific audio exclusions intact.
-6. Disable All Caption Languages, reopen the video, and confirm native behavior.
+6. Disable Extended Auto-Translate (All Languages), reopen the video, and confirm
+   native behavior.
 
 Actual subtitle requests and menu behavior remain subject to device validation;
 the tweak cannot guarantee translation for every video or target language.
