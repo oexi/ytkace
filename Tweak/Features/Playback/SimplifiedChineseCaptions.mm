@@ -1,5 +1,6 @@
 #import "../../YTKACE.h"
 #import "../../Runtime/Hooking.h"
+#import "../../Runtime/Localization.h"
 #import "../../Runtime/Preferences.h"
 
 #import <CoreFoundation/CoreFoundation.h>
@@ -104,8 +105,22 @@ static BOOL YTKACEIsTraditionalChineseCode(NSString *code) {
 }
 
 static NSString *YTKACESimplifiedChineseDisplayName(void) {
-    NSString *name = [NSLocale.currentLocale localizedStringForLanguageCode:@"zh-Hans"];
-    return name.length != 0 ? name : @"中文（简体）";
+    return YTKACELocalized(@"Chinese (Simplified)");
+}
+
+static NSString *YTKACETraditionalChineseDisplayName(void) {
+    return YTKACELocalized(@"Chinese (Traditional)");
+}
+
+static NSString *YTKACETranslationDisplayNameForLanguageCode(NSString *code) {
+    if (YTKACEIsSimplifiedChineseCode(code)) {
+        return YTKACESimplifiedChineseDisplayName();
+    }
+    if (YTKACEIsTraditionalChineseCode(code)) {
+        return YTKACETraditionalChineseDisplayName();
+    }
+    NSString *name = [NSLocale.currentLocale localizedStringForLanguageCode:code];
+    return name.length != 0 ? name : code;
 }
 
 static id YTKACEFormattedNameLike(id originalName, NSString *text) {
@@ -394,6 +409,49 @@ static id YTKACECopySimplifiedChineseEntry(id traditionalEntry) {
     return copy;
 }
 
+static id YTKACECopyTranslationEntryWithDisplayName(id entry,
+                                                     NSString *displayName) {
+    if (entry == nil || displayName.length == 0 ||
+        [entry isKindOfClass:NSString.class]) {
+        return entry;
+    }
+
+    id copy = nil;
+    if ([entry isKindOfClass:NSDictionary.class]) {
+        copy = [entry mutableCopy];
+    } else {
+        @try {
+            if ([entry respondsToSelector:@selector(copyWithZone:)]) {
+                copy = [entry copy];
+            }
+        } @catch (__unused NSException *exception) {
+            copy = nil;
+        }
+    }
+    if (copy == nil) return entry;
+
+    for (NSString *key in @[@"languageName", @"name", @"displayName"]) {
+        id current = YTKACESafeValue(copy, key);
+        if (current == nil) continue;
+        id replacement = YTKACEFormattedNameLike(current, displayName);
+        if (replacement != nil && YTKACESafeSetValue(copy, key, replacement)) {
+            return copy;
+        }
+    }
+
+    Class nameClass = NSClassFromString(@"YTIFormattedString");
+    SEL factory = NSSelectorFromString(@"formattedStringWithString:");
+    if (nameClass != Nil && [nameClass respondsToSelector:factory]) {
+        id formatted = ((id (*)(id, SEL, id))objc_msgSend)(
+            nameClass, factory, displayName);
+        if (formatted != nil &&
+            YTKACESafeSetValue(copy, @"languageName", formatted)) {
+            return copy;
+        }
+    }
+    return entry;
+}
+
 // These are native protobuf objects, not dictionaries: YouTube passes each target
 // to autoTranslationCaptionTrackForAudioTrackData:translateTarget:.
 static NSArray *YTKACEFullCoverageTranslationLanguages(void) {
@@ -408,7 +466,7 @@ static NSArray *YTKACEFullCoverageTranslationLanguages(void) {
     NSMutableArray *targets = [NSMutableArray array];
     for (NSString *code in [codes componentsSeparatedByString:@" "]) {
         id target = [targetClass new];
-        NSString *name = [NSLocale.currentLocale localizedStringForLanguageCode:code] ?: code;
+        NSString *name = YTKACETranslationDisplayNameForLanguageCode(code);
         id formatted = ((id (*)(id, SEL, id))objc_msgSend)(nameClass, factory, name);
         if (formatted != nil && YTKACESafeSetValue(target, @"languageCode", code) &&
             YTKACESafeSetValue(target, @"languageName", formatted)) {
@@ -518,23 +576,37 @@ static id YTKACETranslationLanguages(id receiver, SEL selector) {
     }
 
     NSArray *languages = result;
+    NSMutableArray *normalized = [languages mutableCopy];
     id traditional = nil;
-    for (id entry in languages) {
+    BOOL alreadyHasSimplified = NO;
+    BOOL renamedChineseEntry = NO;
+    for (NSUInteger index = 0; index < languages.count; index++) {
+        id entry = languages[index];
         NSString *code = YTKACELanguageCodeForEntry(entry);
-        if (traditional == nil && YTKACEIsTraditionalChineseCode(code)) {
+        BOOL simplifiedCode = YTKACEIsSimplifiedChineseCode(code);
+        BOOL traditionalCode = YTKACEIsTraditionalChineseCode(code);
+        if (!simplifiedCode && !traditionalCode) continue;
+
+        NSString *displayName = simplifiedCode
+            ? YTKACESimplifiedChineseDisplayName()
+            : YTKACETraditionalChineseDisplayName();
+        id renamed = YTKACECopyTranslationEntryWithDisplayName(entry, displayName);
+        if (renamed != entry) {
+            normalized[index] = renamed;
+            entry = renamed;
+            renamedChineseEntry = YES;
+        }
+        if (simplifiedCode) {
+            alreadyHasSimplified = YES;
+        } else if (traditional == nil) {
             traditional = entry;
         }
     }
-    if (traditional == nil) return result;
+    if (traditional == nil) {
+        return renamedChineseEntry ? normalized : result;
+    }
 
     id simplified = nil;
-    BOOL alreadyHasSimplified = NO;
-    for (id entry in languages) {
-        if (YTKACEIsSimplifiedChineseCode(YTKACELanguageCodeForEntry(entry))) {
-            alreadyHasSimplified = YES;
-            break;
-        }
-    }
     if (!alreadyHasSimplified) {
         simplified = YTKACECopySimplifiedChineseEntry(traditional);
     }
@@ -544,11 +616,9 @@ static id YTKACETranslationLanguages(id receiver, SEL selector) {
     // attached to it request zh-Hans and tag it for on-device Han conversion.
     YTKACEUpdateTranslationEntryURL(traditional, YES);
 
-    if (simplified == nil) return result;
-    NSMutableArray *augmented = [languages isKindOfClass:NSMutableArray.class]
-        ? (NSMutableArray *)languages
-        : [languages mutableCopy];
-    NSUInteger index = [languages indexOfObjectIdenticalTo:traditional];
+    if (simplified == nil) return normalized;
+    NSMutableArray *augmented = normalized;
+    NSUInteger index = [augmented indexOfObjectIdenticalTo:traditional];
     if (index == NSNotFound || index + 1 >= augmented.count) {
         [augmented addObject:simplified];
     } else {
