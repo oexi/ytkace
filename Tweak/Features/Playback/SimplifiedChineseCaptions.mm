@@ -23,7 +23,8 @@ static const void *YTKACETraditionalCaptionTrackAssociation =
     &YTKACETraditionalCaptionTrackAssociation;
 static std::atomic_bool YTKACETraditionalCaptionProxyActive(false);
 static IMP YTKACEOriginalAutoTranslationCaptionTrack;
-static const void *YTKACEFallbackTargetsAssociation = &YTKACEFallbackTargetsAssociation;
+static const void *YTKACEFullCoverageTargetsAssociation =
+    &YTKACEFullCoverageTargetsAssociation;
 
 static NSString *YTKACEChineseCaptionHookKey(Class cls, SEL selector) {
     return [NSString stringWithFormat:@"%@|%@", NSStringFromClass(cls),
@@ -395,13 +396,14 @@ static id YTKACECopySimplifiedChineseEntry(id traditionalEntry) {
 
 // These are native protobuf objects, not dictionaries: YouTube passes each target
 // to autoTranslationCaptionTrackForAudioTrackData:translateTarget:.
-static NSArray *YTKACEFallbackTranslationLanguages(void) {
+static NSArray *YTKACEFullCoverageTranslationLanguages(void) {
     Class targetClass = NSClassFromString(@"YTITranslationTarget");
     Class nameClass = NSClassFromString(@"YTIFormattedString");
     SEL factory = NSSelectorFromString(@"formattedStringWithString:");
     if (targetClass == Nil || ![nameClass respondsToSelector:factory]) return nil;
-    // Conservative fallback only when the player supplies no target list. Keep
-    // the server's complete list whenever one is available.
+    // Full-coverage mode intentionally owns the target list instead of relying
+    // on the iOS client/server list, which is the part that varies by source
+    // caption language and causes Auto-translate to disappear.
     NSString *codes = @"af ak sq am ar hy as ay az bn eu be bho bs bg my ca ceb zh-Hans zh-Hant co hr cs da dv doi nl en eo et ee fil fi fr gl ka de el gn gu ht ha haw iw hi hmn hu is ig id ga it ja jv kn kk km rw ko kri ku ky lo la lv ln lt lg lb mk mg ms ml mt mi mr mn ne no ny or om ps fa pl pt pa qu ro ru sm sa gd sr sn sd si sk sl so st es su sw sv tg ta tt te th ti ts tr tk uk ur ug uz vi cy fy xh yi yo zu";
     NSMutableArray *targets = [NSMutableArray array];
     for (NSString *code in [codes componentsSeparatedByString:@" "]) {
@@ -435,10 +437,10 @@ static id YTKACEAllLanguageCaptionTracks(id receiver, SEL selector) {
     NSMutableArray *tracks = [result mutableCopy];
     for (NSUInteger index = 0; index < tracks.count; index++) {
         id entry = tracks[index];
-        if (!YTKACEUsableTranslationSource(entry) ||
-            [YTKACESafeValue(entry, @"isTranslatable") boolValue]) continue;
-        // Never change the stored protobuf: disabling the feature restores the
-        // unmodified server response, and original subtitle URLs stay intact.
+        if (!YTKACEUsableTranslationSource(entry)) continue;
+        // Full-coverage mode does not trust the native eligibility bit, even
+        // when it is already true. Always expose a copied object owned by this
+        // feature so the server response itself remains untouched.
         if (![entry respondsToSelector:@selector(copyWithZone:)]) continue;
         id copy = [entry copy];
         if (copy != entry && YTKACESafeSetValue(copy, @"isTranslatable", @YES)) {
@@ -454,27 +456,36 @@ static id YTKACETranslationSourceIndices(id receiver, SEL selector) {
     if (!YTKACEFeatureEnabled(YTKACEAllLanguageAutoTranslateKey)) return result;
     id tracks = YTKACESafeValue(receiver, @"captionTracksArray");
     if (![tracks isKindOfClass:NSArray.class]) return result;
-    id indices = [result respondsToSelector:@selector(copyWithZone:)] ? [result copy] : nil;
-    if (indices == nil) indices = [NSClassFromString(@"GPBInt32Array") new];
-    SEL countSEL = @selector(count);
-    SEL at = NSSelectorFromString(@"valueAtIndex:");
+
     SEL add = NSSelectorFromString(@"addValue:");
-    if (indices == result || ![indices respondsToSelector:countSEL] ||
-        ![indices respondsToSelector:at] || ![indices respondsToSelector:add]) return result;
-    NSMutableSet *seen = [NSMutableSet set];
-    NSUInteger count = ((NSUInteger (*)(id, SEL))objc_msgSend)(indices, countSEL);
-    for (NSUInteger index = 0; index < count; index++) {
-        int32_t value = ((int32_t (*)(id, SEL, NSUInteger))objc_msgSend)(indices, at, index);
-        [seen addObject:@(value)];
-    }
+    Class indicesClass = result != nil ? object_getClass(result)
+                                       : NSClassFromString(@"GPBInt32Array");
+    id indices = indicesClass != Nil ? [indicesClass new] : nil;
+    if (indices == nil || ![indices respondsToSelector:add]) return result;
+
+    BOOL addedAny = NO;
     for (NSUInteger index = 0; index < [tracks count] && index <= INT32_MAX; index++) {
-        if (YTKACEUsableTranslationSource(tracks[index]) && ![seen containsObject:@(index)]) {
+        if (YTKACEUsableTranslationSource(tracks[index])) {
             ((void (*)(id, SEL, int32_t))objc_msgSend)(indices, add, (int32_t)index);
+            addedAny = YES;
         }
     }
+    if (!addedAny) return result;
+
+    // This intentionally replaces, rather than extends, the native source list.
     // Native sourceCaptionTrackForIndices:audioTrackData: still intersects these
-    // indices with the selected audio track; never select another dub's captions.
+    // indices with the selected audio track, so multi-audio selection remains
+    // constrained to the active audio track.
     return indices;
+}
+
+static BOOL YTKACEHasUsableTranslationSource(id receiver) {
+    id tracks = YTKACESafeValue(receiver, @"captionTracksArray");
+    if (![tracks isKindOfClass:NSArray.class]) return NO;
+    for (id track in (NSArray *)tracks) {
+        if (YTKACEUsableTranslationSource(track)) return YES;
+    }
+    return NO;
 }
 
 static id YTKACETranslationLanguages(id receiver, SEL selector) {
@@ -484,24 +495,22 @@ static id YTKACETranslationLanguages(id receiver, SEL selector) {
         : nil;
     if (YTKACEFeatureEnabled(YTKACEAllLanguageAutoTranslateKey) &&
         [receiver isKindOfClass:NSClassFromString(@"YTIPlayerCaptionsTrackListRenderer")] &&
-        (result == nil || ([result isKindOfClass:NSArray.class] && [result count] == 0))) {
-        id tracks = YTKACESafeValue(receiver, @"captionTracksArray");
-        if ([tracks isKindOfClass:NSArray.class]) {
-            for (id track in tracks) {
-                if (YTKACEUsableTranslationSource(track)) {
-                    NSArray *fallback = objc_getAssociatedObject(receiver, YTKACEFallbackTargetsAssociation);
-                    if (fallback == nil) {
-                        fallback = YTKACEFallbackTranslationLanguages();
-                        if (fallback.count != 0) {
-                            objc_setAssociatedObject(receiver, YTKACEFallbackTargetsAssociation,
-                                                     fallback, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-                        }
-                    }
-                    result = fallback ?: result;
-                    break;
-                }
+        YTKACEHasUsableTranslationSource(receiver)) {
+        NSArray *targets = objc_getAssociatedObject(
+            receiver, YTKACEFullCoverageTargetsAssociation);
+        if (targets == nil) {
+            targets = YTKACEFullCoverageTranslationLanguages();
+            if (targets.count != 0) {
+                objc_setAssociatedObject(receiver,
+                                         YTKACEFullCoverageTargetsAssociation,
+                                         targets,
+                                         OBJC_ASSOCIATION_RETAIN_NONATOMIC);
             }
         }
+        // Full-coverage mode deliberately replaces the native list even when
+        // YouTube already supplied one, making behavior consistent across
+        // English and non-English source captions.
+        if (targets.count != 0) result = targets;
     }
     if (!YTKACEFeatureEnabled(YTKACESimplifiedChineseAutoTranslateKey) ||
         ![result isKindOfClass:NSArray.class]) {

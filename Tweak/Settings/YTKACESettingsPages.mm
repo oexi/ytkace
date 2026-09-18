@@ -1511,7 +1511,7 @@ static NSDictionary *YTKACEStreamingOptionsDefinition(void) {
                 @"Adds the missing Simplified Chinese option to the iOS app and fixes delayed or misaligned Traditional Chinese auto-translate.",
                 @"YTKACE.Preference.Playback.SimplifiedChineseAutoTranslate"),
             YTKACEToggleDetail(@"Auto-Translate All Caption Languages",
-                @"Enables native auto-translate for non-English captions. Requires an existing subtitle track. Reopen the video after changing this setting.",
+                @"Overrides YouTube's auto-translate eligibility and language list for every video with an existing caption track. Reopen the video after changing this setting.",
                 @"YTKACE.Preference.Playback.AllLanguageAutoTranslate")
         ]
     ], @[YTKACELocalized(@"QUALITY"), YTKACELocalized(@"DOUBLE TAP"), YTKACELocalized(@"AUTOPLAY & DATA")]);
