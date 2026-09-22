@@ -832,19 +832,15 @@ static void YTKACEDiscoverChineseCaptionHooks(void) {
     YTKACEInstallChineseCaptionHook(NSClassFromString(@"YTColdConfig"),
         NSSelectorFromString(@"iosPlayerClientSharedConfigEnableCaptionsAutoTranslationIosClient"),
         (IMP)YTKACEAutoTranslationEnabled, 'B');
-    int count = objc_getClassList(NULL, 0);
-    if (count <= 0) return;
-
-    Class *classes = (Class *)calloc((size_t)count, sizeof(Class));
-    if (classes == NULL) return;
-    count = objc_getClassList(classes, count);
-
-    for (int index = 0; index < count; index++) {
-        Class cls = classes[index];
-        NSString *className = NSStringFromClass(cls).lowercaseString;
+    // Walk the app images' class lists by name so that only caption classes
+    // get realized, matching the other discovery scans.
+    for (NSString *scanName in YTKACEAppClassNames()) {
+        NSString *className = scanName.lowercaseString;
         BOOL captionClass = [className containsString:@"caption"] ||
                             [className containsString:@"subtitle"];
         if (!captionClass) continue;
+        Class cls = NSClassFromString(scanName);
+        if (cls == Nil) continue;
 
         for (NSString *selectorName in @[
             @"translationLanguagesArray",
@@ -876,7 +872,6 @@ static void YTKACEDiscoverChineseCaptionHooks(void) {
         }
         free(methods);
     }
-    free(classes);
 }
 
 void YTKACEInstallSimplifiedChineseCaptionHooks(void) {
