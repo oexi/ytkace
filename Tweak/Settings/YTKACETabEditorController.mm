@@ -1,4 +1,5 @@
 #import "YTKACETabEditorController.h"
+#import "../UI/Notice.h"
 #import "YTKACERootOptionsController.h"
 #import "YTKACESettingsPages.h"
 #import "../YTKACE.h"
@@ -296,6 +297,29 @@ commitEditingStyle:(UITableViewCellEditingStyle)editingStyle
         ? self.activeTabs[(NSUInteger)indexPath.row]
         : self.inactiveTabs[(NSUInteger)indexPath.row];
     if (editingStyle == UITableViewCellEditingStyleDelete) {
+        NSString *key = tab[@"key"];
+        BOOL isSettingsRoute =
+            [key isEqualToString:@"YTKACE.Preference.Tabs.Hidden.YTKACETab"] ||
+            [key isEqualToString:@"YTKACE.Preference.Tabs.Hidden.Library"];
+        if (isSettingsRoute) {
+            NSString *other = [key isEqualToString:
+                @"YTKACE.Preference.Tabs.Hidden.YTKACETab"]
+                ? @"YTKACE.Preference.Tabs.Hidden.Library"
+                : @"YTKACE.Preference.Tabs.Hidden.YTKACETab";
+            BOOL otherHidden = NO;
+            for (NSMutableDictionary *entry in self.inactiveTabs) {
+                if ([entry[@"key"] isEqualToString:other]) {
+                    otherHidden = YES;
+                    break;
+                }
+            }
+            if (otherHidden) {
+                [tableView setEditing:NO animated:YES];
+                YTKACEShowNotice(YTKACELocalized(
+                    @"Keep the YTKACE or Library tab so settings stay reachable."));
+                return;
+            }
+        }
         [self.activeTabs removeObjectAtIndex:(NSUInteger)indexPath.row];
         [self.inactiveTabs addObject:tab];
     } else if (editingStyle == UITableViewCellEditingStyleInsert) {

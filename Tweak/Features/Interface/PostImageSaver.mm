@@ -29,7 +29,6 @@ static void YTKACEWriteImageDataToPhotos(NSData *data) {
                 if (success) {
                     YTKACEShowNotice(YTKACELocalized(@"Saved to Photos"));
                 } else {
-                    YTKACEDownloadLog(@"postimage", @"save failed %@", error);
                     YTKACEShowNotice(error.localizedDescription ?:
                         YTKACELocalized(@"The image could not be saved."));
                 }
@@ -93,7 +92,6 @@ static NSURL *YTKACEOriginalImageURL(NSURL *url) {
 - (void)saveTapped:(UIButton *)sender {
     id node = YTKACECurrentZoomNode;
     if (node == nil) {
-        YTKACEDownloadLog(@"postimage", @"no tracked zoom node");
         YTKACEShowNotice(YTKACELocalized(@"The image could not be saved."));
         return;
     }
@@ -103,29 +101,24 @@ static NSURL *YTKACEOriginalImageURL(NSURL *url) {
         ? ((id (*)(id, SEL))objc_msgSend)(node, urlGetter)
         : nil;
     if (url == nil) {
-        YTKACEDownloadLog(@"postimage", @"node has no URL yet");
         YTKACEShowNotice(YTKACELocalized(@"The image is still loading."));
         return;
     }
 
     NSURL *original = YTKACEOriginalImageURL(url);
-    YTKACEDownloadLog(@"postimage", @"fetch %@", original.lastPathComponent);
     sender.enabled = NO;
     NSURLSessionDataTask *task = [NSURLSession.sharedSession
         dataTaskWithURL:original
-      completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
+      completionHandler:^(NSData *data, NSURLResponse *response,
+                          __unused NSError *error) {
         (void)response;
         dispatch_async(dispatch_get_main_queue(), ^{ sender.enabled = YES; });
         if (data.length == 0) {
-            YTKACEDownloadLog(@"postimage", @"fetch failed %@",
-                              error.localizedDescription ?: @"empty");
             dispatch_async(dispatch_get_main_queue(), ^{
                 YTKACEShowNotice(YTKACELocalized(@"The image could not be saved."));
             });
             return;
         }
-        YTKACEDownloadLog(@"postimage", @"fetched bytes=%lu",
-                          (unsigned long)data.length);
         YTKACEWriteImageDataToPhotos(data);
     }];
     [task resume];
@@ -176,9 +169,6 @@ static void YTKACEAttachSaveButton(UIView *container) {
         [button.widthAnchor constraintEqualToConstant:44.0],
         [button.heightAnchor constraintEqualToConstant:44.0]
     ]];
-    YTKACEDownloadLog(@"postimage", @"save button attached bounds=%.0fx%.0f",
-                      CGRectGetWidth(container.bounds),
-                      CGRectGetHeight(container.bounds));
 }
 
 static UIViewController *YTKACEOwningController(UIView *view) {
@@ -215,9 +205,7 @@ static void YTKACEZoomNodeDidEnterVisibleState(id receiver, SEL selector) {
 }
 
 void YTKACEInstallPostImageSaverHooks(void) {
-    const BOOL visible = YTKACEInstallInstanceHook(
+    YTKACEInstallInstanceHook(
         @"YTImageZoomNode", @"didEnterVisibleState",
         (IMP)YTKACEZoomNodeDidEnterVisibleState, &OriginalZoomNodeVisible);
-    YTKACEDownloadLog(@"postimage", @"hooks visible=%d enabled=%d", visible,
-                      YTKACEFeatureEnabled(YTKACEPostImageSaveKey));
 }

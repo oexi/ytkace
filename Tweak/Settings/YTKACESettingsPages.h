@@ -41,5 +41,12 @@ FOUNDATION_EXPORT void YTKACEPresentChoiceMenu(UIViewController *presenter,
                                                YTKACEChoiceHandler handler);
 
 FOUNDATION_EXPORT NSArray<NSDictionary *> *YTKACEAllPageDefinitions(void);
+FOUNDATION_EXPORT UIViewController *YTKACEMakeSettingsResultsController(
+    NSArray<NSArray<NSDictionary *> *> *sections,
+    NSArray<NSString *> *sectionTitles);
+FOUNDATION_EXPORT void YTKACEUpdateSettingsResultsController(
+    UIViewController *controller,
+    NSArray<NSArray<NSDictionary *> *> *sections,
+    NSArray<NSString *> *sectionTitles);
 
 NS_ASSUME_NONNULL_END

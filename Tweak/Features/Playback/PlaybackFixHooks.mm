@@ -106,6 +106,18 @@ static void YTKACEReplay(id player, NSString *stage) {
     YTKACEDownloadLog(@"fix", @"%@ replay sent", stage);
 }
 
+static void YTKACEScheduleCaptionRestore(id player) {
+    __weak id weakPlayer = player;
+    const double delays[] = { 0.6, 1.5, 3.0 };
+    for (size_t index = 0; index < sizeof(delays) / sizeof(delays[0]); index++) {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW,
+                                     (int64_t)(delays[index] * NSEC_PER_SEC)),
+                       dispatch_get_main_queue(), ^{
+            YTKACECaptionsRestore(weakPlayer);
+        });
+    }
+}
+
 static double YTKACEPosition(id player) {
     SEL time = NSSelectorFromString(@"currentVideoMediaTime");
     if (![player respondsToSelector:time]) return -1.0;
@@ -179,6 +191,7 @@ static void YTKACEHandleError(id receiver, SEL selector, id error) {
                 return;
             }
             YTKACEDownloadLog(@"fix", @"stalled at %.2f, retrying", savedTime);
+            YTKACECaptionsSnapshot(pvc);
             YTKACESendRetryEvent(receiver, @"primary");
 
             if (pvc) {
@@ -191,6 +204,7 @@ static void YTKACEHandleError(id receiver, SEL selector, id error) {
                                                  (int64_t)(0.10 * NSEC_PER_SEC)),
                                    dispatch_get_main_queue(), ^{
                         YTKACEReplay(pvc, @"primary");
+                        YTKACEScheduleCaptionRestore(pvc);
 
                         if (!gEmergencyCheckRunning) {
                             gEmergencyCheckRunning = true;
@@ -212,6 +226,7 @@ static void YTKACEHandleError(id receiver, SEL selector, id error) {
                                                                  (int64_t)(0.20 * NSEC_PER_SEC)),
                                                    dispatch_get_main_queue(), ^{
                                         YTKACEReplay(pvc, @"emergency");
+                                        YTKACEScheduleCaptionRestore(pvc);
                                         gIsTimeToRetry = NO;
                                         YTKACEDownloadLog(@"fix", @"emergency done");
                                     });

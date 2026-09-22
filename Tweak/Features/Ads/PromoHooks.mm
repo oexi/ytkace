@@ -1,4 +1,5 @@
 #import "../../YTKACE.h"
+#import "../Downloads/DownloadLog.h"
 #import "../../Runtime/Hooking.h"
 #import "../../Runtime/Preferences.h"
 
@@ -59,19 +60,33 @@ static BOOL YTKACEShouldShowYouThere(id receiver, SEL selector) {
          ((BOOL (*)(id, SEL))OriginalYouTherePrompt)(receiver, selector));
 }
 
-static BOOL YTKACEInterstitialIsPromo(id command) {
+static BOOL YTKACEInterstitialIsPromo(id command, NSString **outMatch) {
     if (command == nil) return NO;
     NSString *text = [[command description] lowercaseString];
     if (text.length == 0) return NO;
-    for (NSString *marker in @[@"premium", @"upsell", @"promo", @"mealbar",
-                               @"offer", @"subscribe", @"upgrade"]) {
-        if ([text containsString:marker]) return YES;
+    if ([text containsString:@"post"] || [text containsString:@"image"] ||
+        [text containsString:@"lightbox"] || [text containsString:@"attachment"]) {
+        if (outMatch != NULL) *outMatch = @"post content";
+        return NO;
+    }
+    for (NSString *marker in @[@"premium", @"upsell", @"mealbar",
+                               @"promo_sheet", @"promosheet"]) {
+        if ([text containsString:marker]) {
+            if (outMatch != NULL) *outMatch = marker;
+            return YES;
+        }
     }
     return NO;
 }
 
 static BOOL YTKACEShouldThrottleInterstitial(id receiver, SEL selector) {
-    if (YTKACEHidePromos() && YTKACEInterstitialIsPromo(receiver)) return YES;
+    if (YTKACEHidePromos()) {
+        NSString *match = nil;
+        BOOL promo = YTKACEInterstitialIsPromo(receiver, &match);
+        if (promo) {
+            return YES;
+        }
+    }
     return OriginalThrottleInterstitial != NULL &&
         ((BOOL (*)(id, SEL))OriginalThrottleInterstitial)(receiver, selector);
 }

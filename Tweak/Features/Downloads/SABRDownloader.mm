@@ -1,6 +1,7 @@
 #import "SABRDownloader.h"
 #import "DownloadLog.h"
 #import "StreamResolver.h"
+#import "../../Runtime/Preferences.h"
 
 #import <UIKit/UIKit.h>
 #import <objc/message.h>
@@ -30,6 +31,59 @@ void YTKACESABRSetCurrentVideoID(NSString *videoID) {
     }
 }
 
+static NSURL *YTKACESABRSeedURL(void) {
+    NSURL *directory = YTKACEApplicationSupportDirectory();
+    return [directory URLByAppendingPathComponent:@"sabr-seed.plist"];
+}
+
+static void YTKACESABRPersistSeed(NSData *body, NSDictionary *headers) {
+    static NSTimeInterval lastWrite;
+    static BOOL wroteWithHeaders;
+    NSTimeInterval now = NSDate.date.timeIntervalSinceReferenceDate;
+    BOOL upgrade = headers.count != 0 && !wroteWithHeaders;
+    if (!upgrade && now - lastWrite < 30.0) return;
+    if (headers.count != 0) wroteWithHeaders = YES;
+    if (body.length == 0) {
+        YTKACEDownloadLog(@"resolve", @"seed skip body=0");
+        return;
+    }
+    lastWrite = now;
+    NSDictionary *seed = headers.count != 0
+        ? @{@"body": body, @"headers": headers} : @{@"body": body};
+    NSError *error = nil;
+    NSData *encoded = [NSPropertyListSerialization dataWithPropertyList:seed
+        format:NSPropertyListBinaryFormat_v1_0 options:0 error:&error];
+    NSURL *url = YTKACESABRSeedURL();
+    BOOL wrote = encoded.length != 0 &&
+        [encoded writeToURL:url atomically:YES];
+    YTKACEDownloadLog(@"resolve",
+        @"seed write ok=%d bytes=%lu headers=%lu error=%@ path=%@",
+        wrote, (unsigned long)encoded.length, (unsigned long)headers.count,
+        error.localizedDescription ?: @"none", url.path);
+}
+
+void YTKACESABRRestoreSeed(void) {
+    @synchronized (YTKACESABRDownloader.class) {
+        if (YTKACESABRNativeBody.length != 0) return;
+    }
+    NSData *encoded = [NSData dataWithContentsOfURL:YTKACESABRSeedURL()];
+    if (encoded.length == 0) return;
+    NSDictionary *seed = [NSPropertyListSerialization
+        propertyListWithData:encoded options:NSPropertyListImmutable
+                      format:NULL error:NULL];
+    NSData *body = seed[@"body"];
+    NSDictionary *headers = seed[@"headers"];
+    if (![body isKindOfClass:NSData.class]) return;
+    @synchronized (YTKACESABRDownloader.class) {
+        YTKACESABRNativeBody = [body copy];
+        if ([headers isKindOfClass:NSDictionary.class] && headers.count != 0) {
+            YTKACESABRNativeHeaders = [headers copy];
+        }
+    }
+    YTKACEDownloadLog(@"resolve", @"restored sabr seed body=%lu headers=%lu",
+        (unsigned long)body.length, (unsigned long)headers.count);
+}
+
 NSString *YTKACESABRCurrentVideoIDValue(void) {
     @synchronized (YTKACESABRDownloader.class) {
         return [YTKACESABRCurrentVideoID copy];
@@ -38,6 +92,15 @@ NSString *YTKACESABRCurrentVideoIDValue(void) {
 
 void YTKACESABRSetNativeHeaders(NSDictionary<NSString *, NSString *> *headers) {
     if (headers.count == 0) return;
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_LOW, 0), ^{
+        NSData *body = nil;
+        NSDictionary *current = nil;
+        @synchronized (YTKACESABRDownloader.class) {
+            body = [YTKACESABRNativeBody copy];
+            current = [headers copy];
+        }
+        if (body.length != 0) YTKACESABRPersistSeed(body, current);
+    });
     @synchronized (YTKACESABRDownloader.class) {
         YTKACESABRNativeHeaders = [headers copy];
         if (YTKACESABRCurrentVideoID.length != 0) {
@@ -61,7 +124,9 @@ static NSDictionary<NSString *, NSString *> *YTKACESABRCurrentNativeHeaders(
         NSDictionary *matched = config.length != 0
             ? YTKACESABRHeadersByConfig[config] : nil;
         if (matched.count != 0) return [matched copy];
-        if (videoID.length != 0) return [YTKACESABRHeadersByVideo[videoID] copy];
+        NSDictionary *byVideo = videoID.length != 0
+            ? YTKACESABRHeadersByVideo[videoID] : nil;
+        if (byVideo.count != 0) return [byVideo copy];
         return [YTKACESABRNativeHeaders copy];
     }
 }
@@ -86,6 +151,11 @@ void YTKACESABRSetNativeRequest(NSURLRequest *request) {
             YTKACESABRBodiesByVideo[YTKACESABRCurrentVideoID] = [request.HTTPBody copy];
         }
         NSData *config = YTKACEPBDataField(request.HTTPBody, 5);
+        NSData *seedBody = [request.HTTPBody copy];
+        NSDictionary *seedHeaders = [YTKACESABRNativeHeaders copy];
+        dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_LOW, 0), ^{
+            YTKACESABRPersistSeed(seedBody, seedHeaders);
+        });
         if (config.length != 0) {
             if (YTKACESABRBodiesByConfig == nil) {
                 YTKACESABRBodiesByConfig = [NSMutableDictionary dictionary];
@@ -107,11 +177,24 @@ void YTKACESABRSetNativeRequest(NSURLRequest *request) {
         YTKACEPBFieldSummary(request.HTTPBody), path);
 }
 
+static BOOL YTKACESABRHasExactNativeBody(NSString *videoID, NSData *config) {
+    @synchronized (YTKACESABRDownloader.class) {
+        if (config.length != 0 && YTKACESABRBodiesByConfig[config].length != 0) {
+            return YES;
+        }
+        if (videoID.length != 0 && YTKACESABRBodiesByVideo[videoID].length != 0) {
+            return YES;
+        }
+        return NO;
+    }
+}
+
 static NSData *YTKACESABRCurrentNativeBody(NSString *videoID, NSData *config) {
     @synchronized (YTKACESABRDownloader.class) {
         NSData *matched = config.length != 0 ? YTKACESABRBodiesByConfig[config] : nil;
         if (matched.length != 0) return [matched copy];
-        if (videoID.length != 0) return [YTKACESABRBodiesByVideo[videoID] copy];
+        NSData *byVideo = videoID.length != 0 ? YTKACESABRBodiesByVideo[videoID] : nil;
+        if (byVideo.length != 0) return [byVideo copy];
         return [YTKACESABRNativeBody copy];
     }
 }
@@ -711,7 +794,9 @@ NSUInteger YTKACEPurgeDownloadScratch(BOOL includeActive) {
         ? self.video.downloadedDuration : self.audio.downloadedDuration;
     NSInteger resolution = MAX(self.video.option.height, 360);
     NSData *nativeBody = YTKACESABRCurrentNativeBody(self.videoID, self.ustreamerConfig);
-    NSData *nativeState = YTKACEPBDataField(nativeBody, 1);
+    NSData *nativeState = YTKACESABRHasExactNativeBody(self.videoID,
+                                                       self.ustreamerConfig)
+        ? YTKACEPBDataField(nativeBody, 1) : nil;
     NSMutableData *state = [NSMutableData data];
     if (nativeState.length != 0) {
         [state appendData:nativeState];

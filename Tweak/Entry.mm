@@ -1,4 +1,5 @@
 #import "YTKACE.h"
+#import "Features/Downloads/SABRDownloader.h"
 #import "Features/Downloads/DownloadLog.h"
 #import "Features/SponsorBlock/DeArrow.h"
 #import "Runtime/Preferences.h"
@@ -9,7 +10,7 @@
 #define YTKACE_COMBINED_SABR 0
 #endif
 
-NSString * const YTKACEVersion = @"0.9.3";
+NSString * const YTKACEVersion = @"1.0.1";
 
 static void YTKACEInstallModules(void) {
     YTKACEInstallSideloadCompatibilityHooks();
@@ -24,14 +25,24 @@ static void YTKACEInstallModules(void) {
     YTKACEInstallBackgroundPlaybackHooks();
     YTKACEInstallSpeedHooks();
     YTKACEInstallLoopHooks();
+    YTKACEInstallAutoplayHooks();
+    YTKACEInstallCaptionHooks();
+    YTKACEInstallTranscriptHooks();
     YTKACEInstallSleepTimerHooks();
     YTKACEInstallPiPHooks();
     YTKACEInstallPlaybackFixHooks();
     YTKACEInstallSimplifiedChineseCaptionHooks();
     YTKACEInstallDownloadHooks();
+    YTKACESABRRestoreSeed();
+    YTKACERestorePlayerRequest();
+    YTKACEInstallPlaylistDownloaderHooks();
+    YTKACEInstallFeedDownloadHooks();
+    YTKACEInstallQueueHooks();
     YTKACEInstallGlobalDownloadMiniPlayer();
     YTKACEInstallDoubleTapHooks();
     YTKACEInstallShortsLimitHooks();
+    YTKACEInstallShortsStartupHooks();
+    YTKACEInstallShortsPinchHooks();
     YTKACEInstallProgressBarHooks();
     YTKACEInstallStreamingHooks();
     YTKACEInstallShortsHooks();

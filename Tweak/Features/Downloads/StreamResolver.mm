@@ -1,4 +1,5 @@
 #import "StreamResolver.h"
+#import "DownloadLog.h"
 #import "../../Runtime/Localization.h"
 
 #import <UIKit/UIKit.h>
@@ -126,6 +127,18 @@ static BOOL YTKACEHighResolutionSupported(YTKACEStreamOption *option) {
     return NO;
 }
 
+static NSString *YTKACEVideoRejectReason(YTKACEStreamOption *option) {
+    if (![option.mimeType hasPrefix:@"video/"]) return @"not video";
+    if (option.itag <= 0) return @"no itag";
+    if (![option.mimeType containsString:@"video/mp4"] &&
+        ![option.mimeType containsString:@"video/webm"]) {
+        return @"container unsupported";
+    }
+    if (option.height <= 0) return @"no height";
+    if (!YTKACEHighResolutionSupported(option)) return @"no hardware decode";
+    return nil;
+}
+
 static id YTKACEPlayerData(id playerResponse) {
     return YTKACENestedObject(playerResponse, @"playerData") ?: playerResponse;
 }
@@ -235,24 +248,25 @@ static YTKACEStreamOption *YTKACEOptionFromFormat(id format, BOOL adaptive) {
     NSArray *options = [self optionsFromPlayerResponse:playerResponse];
     NSMutableDictionary<NSString *, YTKACEStreamOption *> *byQuality =
         [NSMutableDictionary dictionary];
+    YTKACEDownloadLog(@"quality", @"formats=%lu video=%@ decode avc1=%d hevc=%d vp9=%d av1=%d",
+        (unsigned long)options.count,
+        [self videoIDFromPlayerResponse:playerResponse] ?: @"?",
+        VTIsHardwareDecodeSupported(kCMVideoCodecType_H264),
+        VTIsHardwareDecodeSupported(kCMVideoCodecType_HEVC),
+        VTIsHardwareDecodeSupported('vp09'),
+        VTIsHardwareDecodeSupported('av01'));
     for (YTKACEStreamOption *option in options) {
-        if (![option.mimeType hasPrefix:@"video/"] || option.itag <= 0) {
-            continue;
-        }
-        BOOL compatible = [option.mimeType containsString:@"video/mp4"] ||
-            [option.mimeType containsString:@"video/webm"];
-        if (!compatible) {
-            continue;
-        }
         if (option.height <= 0) {
             option.height = YTKACEQualityHeight(option.qualityLabel);
         }
-        if (option.height <= 0) continue;
-        if (!YTKACEHighResolutionSupported(option)) continue;
-        NSString *plainLabel = [option.qualityLabel.lowercaseString
-            stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
-        if ([plainLabel isEqualToString:@"1440p"] ||
-            [plainLabel isEqualToString:@"2160p"]) {
+        NSString *reason = YTKACEVideoRejectReason(option);
+        if (reason != nil) {
+            if (option.height >= 1080) {
+                YTKACEDownloadLog(@"quality", @"dropped itag=%ld %@ %@ -> %@",
+                    (long)option.itag,
+                    option.qualityLabel.length != 0 ? option.qualityLabel : @"-",
+                    option.mimeType, reason);
+            }
             continue;
         }
         NSString *key = option.qualityLabel.length != 0
@@ -265,6 +279,9 @@ static YTKACEStreamOption *YTKACEOptionFromFormat(id format, BOOL adaptive) {
             byQuality[key] = option;
         }
     }
+    YTKACEDownloadLog(@"quality", @"offering %@",
+        [[byQuality.allKeys sortedArrayUsingSelector:@selector(compare:)]
+            componentsJoinedByString:@", "]);
     return [byQuality.allValues sortedArrayUsingComparator:
         ^NSComparisonResult(YTKACEStreamOption *left, YTKACEStreamOption *right) {
             if (left.height == right.height) {

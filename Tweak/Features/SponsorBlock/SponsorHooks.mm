@@ -40,7 +40,8 @@ static void YTKACERefreshPlaybackTimePreferenceState(void) {
         YTKACEFeatureEnabled(@"shortsProgress") ||
         YTKACEFeatureEnabled(@"autoSkipShorts") ||
         YTKACEFeatureEnabled(YTKACESpeedKey) ||
-        YTKACEFeatureEnabled(YTKACESleepTimerKey);
+        YTKACEFeatureEnabled(YTKACESleepTimerKey) ||
+        YTKACEFeatureEnabled(@"YTKACE.Preference.Playback.LocalQueue");
 }
 
 static void YTKACEPublishPlaybackTime(id receiver, double time) {
@@ -363,6 +364,8 @@ static void YTKACEDidActivateVideo(id receiver,
             receiver, selector, playbackController, video, playbackData
         );
     }
+
+    YTKACEOpenPausedVideoActivated(receiver);
 
     if (!YTKACESponsorBlockEnabled()) {
         objc_setAssociatedObject(receiver,

@@ -546,18 +546,13 @@ static void YTKACEDiscoverMiscHooks(void) {
     NSArray<NSString *> *captionTokens = @[
         @"caption", @"player", @"playback", @"watch", @"globalconfig"
     ];
-    int count = objc_getClassList(NULL, 0);
-    if (count <= 0) return;
-    Class *classes = (Class *)calloc((size_t)count, sizeof(Class));
-    if (classes == NULL) return;
-    count = objc_getClassList(classes, count);
     NSMutableOrderedSet<NSString *> *targets = [NSMutableOrderedSet orderedSet];
-    for (int index = 0; index < count; index++) {
-        Class cls = classes[index];
-        NSString *className = NSStringFromClass(cls);
+    for (NSString *className in YTKACEAppClassNames()) {
         BOOL mini = YTKACEClassNameMatches(className, miniTokens);
         BOOL caption = YTKACEClassNameMatches(className, captionTokens);
         if (!mini && !caption) continue;
+        Class cls = NSClassFromString(className);
+        if (cls == Nil) continue;
         unsigned int methodCount = 0;
         Method *methods = class_copyMethodList(cls, &methodCount);
         for (unsigned int methodIndex = 0;
@@ -595,7 +590,7 @@ static void YTKACEDiscoverMiscHooks(void) {
         }
         free(methods);
     }
-    free(classes);
+
     NSArray<NSString *> *result = targets.array;
     [NSUserDefaults.standardUserDefaults setObject:result
                                     forKey:YTKACEMiscDiscoveryCacheKey()];

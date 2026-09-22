@@ -1,4 +1,5 @@
 #import "YTKACESettingsPages.h"
+#import "YTKACESettingsSearch.h"
 #import "../Features/Downloads/SABRDownloader.h"
 #import "YTKACERootOptionsController.h"
 #import "YTKACETabEditorController.h"
@@ -520,6 +521,8 @@ NSString *YTKACEPickerSummary(NSString *key,
 - (instancetype)initWithTitle:(NSString *)title
                       sections:(NSArray<NSArray<NSDictionary *> *> *)sections
                 sectionTitles:(NSArray<NSString *> *)sectionTitles;
+- (void)replaceSections:(NSArray<NSArray<NSDictionary *> *> *)sections
+          sectionTitles:(NSArray<NSString *> *)sectionTitles;
 @end
 
 @implementation YTKACEOptionsController {
@@ -1186,7 +1189,30 @@ didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
     YTKACEShowNotice(notice);
 }
 
+- (void)replaceSections:(NSArray<NSArray<NSDictionary *> *> *)sections
+          sectionTitles:(NSArray<NSString *> *)sectionTitles {
+    _sections = [sections copy];
+    _sectionTitles = [sectionTitles copy];
+    [self.tableView reloadData];
+}
+
 @end
+
+UIViewController *YTKACEMakeSettingsResultsController(
+        NSArray<NSArray<NSDictionary *> *> *sections,
+        NSArray<NSString *> *sectionTitles) {
+    return [[YTKACEOptionsController alloc] initWithTitle:@""
+                                                 sections:sections
+                                            sectionTitles:sectionTitles];
+}
+
+void YTKACEUpdateSettingsResultsController(UIViewController *controller,
+        NSArray<NSArray<NSDictionary *> *> *sections,
+        NSArray<NSString *> *sectionTitles) {
+    if (![controller isKindOfClass:YTKACEOptionsController.class]) return;
+    [(YTKACEOptionsController *)controller replaceSections:sections
+                                            sectionTitles:sectionTitles];
+}
 
 static YTKACEOptionsController *YTKACEPage(NSString *title,
                                            NSArray *sections,
@@ -1388,11 +1414,24 @@ static NSDictionary *YTKACEPlayerControlsDefinition(void) {
     ];
     return YTKACEPageDefinition(@"player", @"Player", @[
         @[
-            YTKACEToggle(@"Download Button", YTKACEDownloadKey, @"", @""),
-            YTKACEPicker(@"Save downloads to",
+            YTKACEPicker(@"Download button",
+                         @"YTKACE.Preference.Downloads.Placement",
+                         @[@"Off", @"Player overlay", @"YouTube's button", @"Both"],
+                         @[@0, @1, @2, @3], 0, @"", @""),
+            YTKACEPicker(@"Save video downloads to",
                          @"YTKACE.Preference.Downloads.SaveLocation",
-                         @[@"YTKACE Library", @"Photos", @"Ask"],
-                         @[@0, @1, @2], 0, @"", @""),
+                         @[@"YTKACE Library", @"Photos", @"Ask", @"Share Sheet"],
+                         @[@0, @1, @2, @3], 0, @"", @""),
+            YTKACEPicker(@"Save audio downloads to",
+                         @"YTKACE.Preference.Downloads.AudioSaveLocation",
+                         @[@"YTKACE Library", @"Photos", @"Ask",
+                           @"Share Sheet"],
+                         @[@0, @1, @2, @3], 0, @"", @""),
+            YTKACEToggle(@"Playlist Download Button",
+                         @"YTKACE.Preference.Downloads.PlaylistEnabled", @"", @""),
+            YTKACEToggleDetail(@"Include Subtitles",
+                               @"Embed captions into downloaded videos.",
+                               @"YTKACE.Preference.Downloads.Subtitles"),
             YTKACEToggle(@"PiP Button", YTKACEPiPKey, @"", @""),
             YTKACEToggle(@"Loop Button", YTKACELoopKey, @"", @""),
             YTKACEToggle(@"Sleep Timer Button", YTKACESleepTimerKey, @"", @""),
@@ -1505,16 +1544,42 @@ static NSDictionary *YTKACEStreamingOptionsDefinition(void) {
             YTKACEStepper(@"Skip Time", @"YTKACE.Preference.Playback.DoubleTapSeconds", 5.0, 60.0, 5.0, 10.0)
         ],
         @[
-            YTKACEToggle(@"Stop Autoplay", @"YTKACE.Preference.Playback.AutoplayDisabled", @"", @""),
-            YTKACEToggle(@"HD on Mobile Data", @"YTKACE.Preference.Playback.HDOnCellular", @"", @""),
+            YTKACEToggleDetail(@"Stop Autoplay Next",
+                               @"Do not roll into the next video when one ends.",
+                               @"YTKACE.Preference.Playback.AutoplayDisabled"),
+            YTKACEToggleDetail(@"Open Videos Paused",
+                               @"Videos load without starting playback.",
+                               @"YTKACE.Preference.Playback.OpenPaused"),
+            YTKACEToggle(@"HD on Mobile Data", @"YTKACE.Preference.Playback.HDOnCellular", @"", @"")
+        ],
+        @[
+            YTKACEToggle(@"Local Queue", @"YTKACE.Preference.Playback.LocalQueue", @"", @"")
+        ],
+        @[
+            YTKACEPicker(@"Subtitle Language",
+                         @"YTKACE.Preference.Playback.CaptionLanguage",
+                         @[@"Off", @"English", @"Spanish", @"Portuguese",
+                           @"French", @"German", @"Italian", @"Dutch",
+                           @"Polish", @"Turkish", @"Russian", @"Arabic",
+                           @"Hindi", @"Indonesian", @"Vietnamese", @"Thai",
+                           @"Japanese", @"Korean", @"Chinese"],
+                         @[@"", @"en", @"es", @"pt", @"fr", @"de", @"it",
+                           @"nl", @"pl", @"tr", @"ru", @"ar", @"hi", @"id",
+                           @"vi", @"th", @"ja", @"ko", @"zh"],
+                         0, @"", @""),
             YTKACEToggleDetail(@"Chinese Auto-Translate Fix",
-                @"Adds the missing Simplified Chinese option to the iOS app and fixes delayed or misaligned Traditional Chinese auto-translate.",
-                @"YTKACE.Preference.Playback.SimplifiedChineseAutoTranslate"),
+                               @"Adds the missing Simplified Chinese option to the iOS app and fixes delayed or misaligned Traditional Chinese auto-translate.",
+                               @"YTKACE.Preference.Playback.SimplifiedChineseAutoTranslate"),
             YTKACEToggleDetail(@"Auto-Translate All Caption Languages",
-                @"Overrides YouTube's auto-translate eligibility and language list for every video with an existing caption track. Reopen the video after changing this setting.",
-                @"YTKACE.Preference.Playback.AllLanguageAutoTranslate")
+                               @"Overrides YouTube's auto-translate eligibility and language list for every video with an existing caption track. Reopen the video after changing this setting.",
+                               @"YTKACE.Preference.Playback.AllLanguageAutoTranslate")
+        ],
+        @[
+            YTKACEToggleDetail(@"Transcript Button",
+                               @"Copy or share a video's captions from the player.",
+                               @"YTKACE.Preference.Playback.Transcript")
         ]
-    ], @[YTKACELocalized(@"QUALITY"), YTKACELocalized(@"DOUBLE TAP"), YTKACELocalized(@"AUTOPLAY & DATA")]);
+    ], @[YTKACELocalized(@"QUALITY"), YTKACELocalized(@"DOUBLE TAP"), YTKACELocalized(@"AUTOPLAY & DATA"), YTKACELocalized(@"QUEUE"), YTKACELocalized(@"SUBTITLES"), YTKACELocalized(@"TRANSCRIPT")]);
 }
 
 static NSDictionary *YTKACENavigationOptionsDefinition(void) {
@@ -1555,6 +1620,9 @@ static NSDictionary *YTKACEShortsOptionsDefinition(void) {
         ],
         @[
             YTKACEToggle(@"Remove Shorts Shelves", @"YTKACE.Preference.Shorts.FeedHidden", @"", @""),
+            YTKACEToggleDetail(@"Pinch to Fullscreen",
+                               @"Pinch out in Shorts to hide the overlay and tab bar.",
+                               @"YTKACE.Preference.Shorts.PinchFullscreen"),
             YTKACEToggle(@"Remove Pause Card", @"YTKACE.Preference.Shorts.PauseCardHidden", @"", @""),
             YTKACEToggle(@"Remove Sticker Ads", @"YTKACE.Preference.Shorts.StickerAdsHidden", @"", @"")
         ],

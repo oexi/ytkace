@@ -175,13 +175,10 @@ static void YTKACEDiscoverNavigationMethodHooks(void) {
         @"chatButton",
         @"inboxButton"
     ]];
-    int count = objc_getClassList(NULL, 0);
-    if (count <= 0) return;
-    Class *classes = (Class *)calloc((size_t)count, sizeof(Class));
-    count = objc_getClassList(classes, count);
     NSMutableOrderedSet<NSString *> *targets = [NSMutableOrderedSet orderedSet];
-    for (int index = 0; index < count; index++) {
-        Class cls = classes[index];
+    for (NSString *scanName in YTKACEAppClassNames()) {
+        Class cls = NSClassFromString(scanName);
+        if (cls == Nil) continue;
         unsigned int methodCount = 0;
         Method *methods = class_copyMethodList(cls, &methodCount);
         for (unsigned int methodIndex = 0; methodIndex < methodCount; methodIndex++) {
@@ -194,7 +191,7 @@ static void YTKACEDiscoverNavigationMethodHooks(void) {
         }
         free(methods);
     }
-    free(classes);
+
     NSString *version = NSBundle.mainBundle
         .infoDictionary[@"CFBundleShortVersionString"] ?: @"unknown";
     NSString *cacheKey =

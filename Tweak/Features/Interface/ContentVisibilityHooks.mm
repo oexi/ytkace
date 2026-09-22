@@ -712,7 +712,7 @@ static void YTKACERestoreHiddenView(UIView *view) {
     NSNumber *baseline = objc_getAssociatedObject(
         view, YTKACEContentHiddenAssociation);
     if (baseline == nil) return;
-    view.hidden = baseline.boolValue;
+    view.hidden = NO;
     view.userInteractionEnabled = YES;
     objc_setAssociatedObject(view,
                              YTKACEContentHiddenAssociation,
@@ -736,7 +736,7 @@ static void YTKACEActionCellPrepareForReuse(UIView *receiver, SEL selector) {
     NSNumber *baseline = objc_getAssociatedObject(
         receiver, YTKACEContentHiddenAssociation);
     if (baseline != nil) {
-        receiver.hidden = baseline.boolValue;
+        receiver.hidden = NO;
         receiver.userInteractionEnabled = YES;
         objc_setAssociatedObject(receiver,
                                  YTKACEContentHiddenAssociation,
@@ -1648,7 +1648,12 @@ static NSArray<NSString *> *YTKACECommunityBytesMarkers(void) {
     static dispatch_once_t t;
     dispatch_once(&t, ^{ v = @[
         @"community_post", @"community_post_section",
-        @"id_ui_backstage_original_post", @"backstage_post"
+        @"id_ui_backstage_original_post", @"backstage_post",
+        @"id.ui.backstage.original_post", @"id.ui.backstage.post",
+        @"id.ui.backstage.post_menu_button",
+        @"post_base_wrapper.eml", @"post_base_wrapper_slim.eml",
+        @"text_post_root.eml", @"image_post_root.eml",
+        @"images_post_root.eml", @"images_post_root_slim.eml"
     ]; });
     return v;
 }
@@ -1668,7 +1673,9 @@ static NSArray<NSString *> *YTKACEPlayableBytesMarkers(void) {
     dispatch_once(&t, ^{ v = @[
         @"playables_shelf", @"playableshelf",
         @"playable_game", @"playablegame",
-        @"playables.shelf", @"playable.game"
+        @"playables.shelf", @"playable.game",
+        @".com/playables/", @"playables_shelf.eml",
+        @"playable_card.eml"
     ]; });
     return v;
 }
@@ -1928,7 +1935,7 @@ static void YTKACEApplyContentVisibility(UIView *view) {
         NSNumber *idleBaseline = objc_getAssociatedObject(
             view, YTKACEContentHiddenAssociation);
         if (idleBaseline == nil) return;
-        view.hidden = idleBaseline.boolValue;
+        view.hidden = NO;
         view.userInteractionEnabled = YES;
         objc_setAssociatedObject(view, YTKACEContentHiddenAssociation, nil,
                                  OBJC_ASSOCIATION_RETAIN_NONATOMIC);
@@ -1947,15 +1954,14 @@ static void YTKACEApplyContentVisibility(UIView *view) {
         if (hidden) {
             if (baseline == nil) {
                 objc_setAssociatedObject(target,
-                                         YTKACEContentHiddenAssociation,
-                                         @(target.hidden),
+                                         YTKACEContentHiddenAssociation, @YES,
                                          OBJC_ASSOCIATION_RETAIN_NONATOMIC);
             }
             target.hidden = YES;
             target.userInteractionEnabled = NO;
             YTKACERefreshActionCollection(view);
         } else if (baseline != nil) {
-            target.hidden = baseline.boolValue;
+            target.hidden = NO;
             target.userInteractionEnabled = YES;
             objc_setAssociatedObject(target,
                                      YTKACEContentHiddenAssociation,
@@ -1982,19 +1988,25 @@ static void YTKACEApplyContentVisibility(UIView *view) {
     if (hidden) {
         if (baseline == nil) {
             objc_setAssociatedObject(target,
-                                     YTKACEContentHiddenAssociation,
-                                     @(target.hidden),
+                                     YTKACEContentHiddenAssociation, @YES,
                                      OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         }
         target.hidden = YES;
         target.userInteractionEnabled = NO;
     } else if (baseline != nil) {
-        target.hidden = baseline.boolValue;
+        target.hidden = NO;
         target.userInteractionEnabled = YES;
         objc_setAssociatedObject(target,
                                  YTKACEContentHiddenAssociation,
                                  nil,
                                  OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+}
+
+static void YTKACEConsiderProductDisplayView(UIView *view, NSString *identifier) {
+    if (YTKACEFeatureEnabled(@"YTKACE.Preference.Overlay.ProductsHidden") &&
+        YTKACEProductIdentifierMatches(identifier)) {
+        YTKACEHideProductSubtree(view);
     }
 }
 
@@ -2004,6 +2016,7 @@ static void YTKACEDisplayViewDidMove(UIView *receiver, SEL selector) {
     }
     YTKACEApplyContentVisibility(receiver);
     YTKACEHandleAdDisplayView(receiver);
+    YTKACEConsiderProductDisplayView(receiver, receiver.accessibilityIdentifier);
 }
 
 static void YTKACEDisplayViewSetIdentifier(UIView *receiver,
@@ -2018,6 +2031,7 @@ static void YTKACEDisplayViewSetIdentifier(UIView *receiver,
     }
     YTKACEApplyContentVisibility(receiver);
     YTKACEHandleAdDisplayView(receiver);
+    YTKACEConsiderProductDisplayView(receiver, identifier);
 }
 
 static BOOL YTKACEHideTopics(void) {
@@ -2069,14 +2083,13 @@ static void YTKACEPaidContentLayout(UIView *receiver, SEL selector) {
     if (hide) {
         if (baseline == nil) {
             objc_setAssociatedObject(receiver,
-                                     YTKACEContentHiddenAssociation,
-                                     @(receiver.hidden),
+                                     YTKACEContentHiddenAssociation, @YES,
                                      OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         }
         receiver.hidden = YES;
         receiver.userInteractionEnabled = NO;
     } else if (baseline != nil) {
-        receiver.hidden = baseline.boolValue;
+        receiver.hidden = NO;
         receiver.userInteractionEnabled = YES;
         objc_setAssociatedObject(receiver,
                                  YTKACEContentHiddenAssociation,

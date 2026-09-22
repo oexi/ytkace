@@ -34,6 +34,14 @@ FOUNDATION_EXPORT void YTKACEPreparePlayerWithRoute(NSString *videoID,
                                                     YTKACEPlayerReloadCompletion completion);
 FOUNDATION_EXPORT void YTKACEPreparePlayer(NSString *videoID,
                                            YTKACEPlayerReloadCompletion completion);
+FOUNDATION_EXPORT BOOL YTKACEPlaybackTemplateReady(void);
+FOUNDATION_EXPORT void YTKACESABRRestoreSeed(void);
+FOUNDATION_EXPORT void YTKACERestorePlayerRequest(void);
+FOUNDATION_EXPORT void YTKACEInstallFeedDownloadHooks(void);
+FOUNDATION_EXPORT void YTKACEDiscardRestoredRequest(void);
+FOUNDATION_EXPORT void YTKACEResolvePlayerResponse(
+    NSString *videoID,
+    YTKACEPlayerReloadCompletion completion);
 FOUNDATION_EXPORT void YTKACEReloadPlayer(NSString * _Nullable videoID,
                                          NSString *token,
                                          YTKACEPlayerReloadCompletion completion);

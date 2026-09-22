@@ -48,6 +48,10 @@ void YTKACERegisterDefaults(void) {
         objectForKey:@"YTKACE.Preference.Gestures.LeftAction"] != nil;
     BOOL hasRightAction = [YTKACEDefaults()
         objectForKey:@"YTKACE.Preference.Gestures.RightAction"] != nil;
+    id legacyDownloadButton = [YTKACEDefaults()
+        objectForKey:@"YTKACE.Preference.Downloads.Enabled"];
+    BOOL hasPlacement = [YTKACEDefaults()
+        objectForKey:@"YTKACE.Preference.Downloads.Placement"] != nil;
     [YTKACEDefaults() registerDefaults:@{
         YTKACEMasterEnabledKey: @YES,
         YTKACENoAdsKey: @YES,
@@ -60,9 +64,16 @@ void YTKACERegisterDefaults(void) {
         @"YTKACE.Preference.Playback.CustomDoubleTap": @NO,
         @"YTKACE.Preference.Playback.TapToSeek": @NO,
         @"YTKACE.Preference.Sharing.NativeSheet": @NO,
+        @"YTKACE.Preference.Playback.OpenPaused": @NO,
+        @"YTKACE.Preference.Playback.Transcript": @NO,
+        @"YTKACE.Preference.Downloads.Subtitles": @NO,
+        @"YTKACE.Preference.Playback.CaptionLanguage": @"",
+        @"YTKACE.Preference.Shorts.PinchFullscreen": @NO,
         @"YTKACE.Preference.Shorts.RemixHidden": @NO,
         @"YTKACE.Preference.Shorts.ShareHidden": @NO,
         @"YTKACE.Preference.Shorts.SaveHidden": @NO,
+        @"YTKACE.Preference.Downloads.PlaylistEnabled": @NO,
+        @"YTKACE.Preference.Downloads.Placement": @0,
         @"YTKACE.Preference.Shorts.CommentsHidden": @NO,
         @"YTKACE.Preference.Shorts.LikeHidden": @NO,
         @"YTKACE.Preference.Shorts.SoundHidden": @NO,
@@ -133,6 +144,10 @@ void YTKACERegisterDefaults(void) {
         @"YTKACE.Preference.Tabs.Hidden.WatchLater": @YES,
         @"YTKACE.Preference.Tabs.Order": @[@"home", @"shorts", @"subscriptions", @"library", @"ytkace"]
     }];
+    if (!hasPlacement && [legacyDownloadButton boolValue]) {
+        [YTKACEDefaults() setInteger:1
+                              forKey:@"YTKACE.Preference.Downloads.Placement"];
+    }
     if ((!hasLeftAction || !hasRightAction) &&
         (legacyBrightnessSide != nil || legacyVolumeSide != nil)) {
         NSInteger brightness = legacyBrightnessSide != nil
@@ -178,6 +193,14 @@ void YTKACERegisterDefaults(void) {
         }
     }
     YTKACEPurgeDownloadScratch(NO);
+}
+
+NSInteger YTKACEDownloadPlacement(void) {
+    return [YTKACEDefaults() integerForKey:@"YTKACE.Preference.Downloads.Placement"];
+}
+
+BOOL YTKACEDownloadsEnabled(void) {
+    return YTKACEDownloadPlacement() != 0;
 }
 
 BOOL YTKACEMasterEnabled(void) {

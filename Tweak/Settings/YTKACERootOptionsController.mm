@@ -2,6 +2,7 @@
 #import "../YTKACE.h"
 #import "YTKACEDownloadsController.h"
 #import "YTKACESettingsPages.h"
+#import "YTKACESettingsSearch.h"
 #import "../Runtime/Preferences.h"
 #import "../Runtime/Localization.h"
 #import "../UI/Assets.h"
@@ -196,23 +197,47 @@ UIViewController *YTKACEMakeDownloadLogController(void) {
 }
 
 @interface YTKACERootOptionsController ()
+    <UITableViewDataSource, UITableViewDelegate, UITextFieldDelegate,
+     UIGestureRecognizerDelegate>
+@property(nonatomic, strong) UITableView *tableView;
+@property(nonatomic, assign) CGFloat headerTop;
+@property(nonatomic, assign) BOOL headerTopLocked;
+@property(nonatomic, strong) UIButton *closeButton;
+@property(nonatomic, strong) UIButton *applyButton;
 @property(nonatomic, strong) UIView *settingsHeader;
+@property(nonatomic, strong) UITextField *searchField;
+@property(nonatomic, strong) UIView *searchPill;
+@property(nonatomic, strong) NSArray<NSDictionary *> *searchResults;
+@property(nonatomic, strong) UIViewController *searchChild;
 @end
 
 @implementation YTKACERootOptionsController
 
 - (instancetype)init {
-    return [super initWithStyle:UITableViewStyleGrouped];
+    return [super initWithNibName:nil bundle:nil];
 }
 
 - (void)viewDidLoad {
     [super viewDidLoad];
+    self.tableView = [[UITableView alloc] initWithFrame:self.view.bounds
+                                                  style:UITableViewStyleGrouped];
+    self.tableView.dataSource = self;
+    self.tableView.delegate = self;
     self.tableView.cellLayoutMarginsFollowReadableWidth = NO;
     self.tableView.separatorStyle = UITableViewCellSeparatorStyleNone;
     self.tableView.sectionHeaderHeight = 22.0;
     self.tableView.sectionFooterHeight = 6.0;
+    self.tableView.contentInsetAdjustmentBehavior =
+        UIScrollViewContentInsetAdjustmentNever;
+    self.tableView.keyboardDismissMode = UIScrollViewKeyboardDismissModeOnDrag;
+    [self.view addSubview:self.tableView];
+    UITapGestureRecognizer *dismissTap = [[UITapGestureRecognizer alloc]
+        initWithTarget:self action:@selector(dismissKeyboard)];
+    dismissTap.cancelsTouchesInView = NO;
+    dismissTap.delegate = self;
+    [self.view addGestureRecognizer:dismissTap];
     self.settingsHeader = [self makeSettingsHeader];
-    self.tableView.tableHeaderView = self.settingsHeader;
+    [self.view addSubview:self.settingsHeader];
     UILongPressGestureRecognizer *developerHold =
         [[UILongPressGestureRecognizer alloc]
             initWithTarget:self action:@selector(handleDeveloperHold:)];
@@ -231,9 +256,16 @@ UIViewController *YTKACEMakeDownloadLogController(void) {
     if (recognizer.state != UIGestureRecognizerStateBegan) return;
     NSIndexPath *indexPath = [self.tableView indexPathForRowAtPoint:
         [recognizer locationInView:self.tableView]];
-    if (indexPath.section == 4 && indexPath.row == 0) {
+    if (indexPath.section == 3 && indexPath.row == 0) {
         [self showDownloadLog];
     }
+}
+
+- (void)viewSafeAreaInsetsDidChange {
+    [super viewSafeAreaInsetsDidChange];
+    if (self.searchField.isFirstResponder) return;
+    self.headerTopLocked = NO;
+    [self.view setNeedsLayout];
 }
 
 - (void)viewWillAppear:(BOOL)animated {
@@ -243,19 +275,36 @@ UIViewController *YTKACEMakeDownloadLogController(void) {
     self.tableView.backgroundColor = YTKACERootBackground();
     self.settingsHeader.backgroundColor = YTKACERootBackground();
     [self.tableView reloadData];
+    [self.view setNeedsLayout];
+    [self.view layoutIfNeeded];
 }
 
 - (void)viewDidLayoutSubviews {
     [super viewDidLayoutSubviews];
-    CGFloat width = CGRectGetWidth(self.tableView.bounds);
-    CGFloat difference = CGRectGetWidth(self.settingsHeader.frame) - width;
-    difference = difference < 0.0 ? -difference : difference;
-    if (width > 0.0 && difference > 0.5) {
-        CGRect frame = self.settingsHeader.frame;
-        frame.size.width = width;
-        self.settingsHeader.frame = frame;
-        self.tableView.tableHeaderView = self.settingsHeader;
+    const CGFloat width = CGRectGetWidth(self.view.bounds);
+    if (width <= 0.0) return;
+    if (!self.headerTopLocked) {
+        self.headerTop = self.view.safeAreaInsets.top;
+        if (self.headerTop > 0.0) self.headerTopLocked = YES;
     }
+    const CGFloat top = self.headerTop;
+    self.settingsHeader.frame = CGRectMake(0.0, top, width, 170.0);
+    self.closeButton.frame = CGRectMake(8.0, 8.0, 40.0, 40.0);
+    self.applyButton.frame = CGRectMake(width - 48.0, 8.0, 40.0, 40.0);
+    self.searchPill.frame = CGRectMake(20.0, 120.0,
+                                       MAX(0.0, width - 40.0), 38.0);
+    self.searchField.frame = CGRectMake(42.0, 0.0,
+        MAX(0.0, CGRectGetWidth(self.searchPill.bounds) - 54.0), 38.0);
+    const CGFloat contentTop = top + 170.0;
+    const CGFloat contentHeight =
+        MAX(0.0, CGRectGetHeight(self.view.bounds) - contentTop);
+    self.tableView.frame = CGRectMake(0.0, contentTop, width, contentHeight);
+    [self layoutSearchResults];
+}
+
+- (void)layoutSearchResults {
+    if (self.searchChild == nil) return;
+    self.searchChild.view.frame = self.tableView.frame;
 }
 
 - (UIView *)makeSettingsHeader {
@@ -263,7 +312,7 @@ UIViewController *YTKACEMakeDownloadLogController(void) {
     if (width <= 0.0) {
         width = CGRectGetWidth(self.view.bounds);
     }
-    UIView *header = [[UIView alloc] initWithFrame:CGRectMake(0.0, 0.0, width, 122.0)];
+    UIView *header = [[UIView alloc] initWithFrame:CGRectMake(0.0, 0.0, width, 170.0)];
     header.autoresizingMask = UIViewAutoresizingFlexibleWidth;
 
     UIButton *close = [UIButton buttonWithType:UIButtonTypeSystem];
@@ -274,6 +323,7 @@ UIViewController *YTKACEMakeDownloadLogController(void) {
     close.accessibilityLabel = YTKACELocalized(@"Close");
     [close addTarget:self action:@selector(closeSettings) forControlEvents:UIControlEventTouchUpInside];
     [header addSubview:close];
+    self.closeButton = close;
 
     UIButton *apply = [UIButton buttonWithType:UIButtonTypeSystem];
     apply.frame = CGRectMake(width - 48.0, 8.0, 40.0, 40.0);
@@ -284,6 +334,7 @@ UIViewController *YTKACEMakeDownloadLogController(void) {
     apply.accessibilityLabel = YTKACELocalized(@"Apply Settings");
     [apply addTarget:self action:@selector(applySettings) forControlEvents:UIControlEventTouchUpInside];
     [header addSubview:apply];
+    self.applyButton = apply;
 
     UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(56.0, 55.0, width - 112.0, 34.0)];
     title.autoresizingMask = UIViewAutoresizingFlexibleWidth;
@@ -301,16 +352,110 @@ UIViewController *YTKACEMakeDownloadLogController(void) {
     version.textColor = UIColor.secondaryLabelColor;
     [header addSubview:version];
 
+    UIView *pill = [[UIView alloc]
+        initWithFrame:CGRectMake(20.0, 120.0, MAX(0.0, width - 40.0), 38.0)];
+    pill.backgroundColor = UIColor.secondarySystemFillColor;
+    pill.layer.cornerRadius = 19.0;
+    pill.clipsToBounds = YES;
+
+    UIImageView *glass = [[UIImageView alloc]
+        initWithImage:YTKACETemplateImage(@"", @"magnifyingglass")];
+    glass.frame = CGRectMake(14.0, 10.0, 18.0, 18.0);
+    glass.contentMode = UIViewContentModeScaleAspectFit;
+    glass.tintColor = UIColor.secondaryLabelColor;
+    [pill addSubview:glass];
+
+    UITextField *search = [[UITextField alloc]
+        initWithFrame:CGRectMake(42.0, 0.0,
+                                 MAX(0.0, CGRectGetWidth(pill.bounds) - 54.0),
+                                 38.0)];
+    search.placeholder = YTKACELocalized(@"Search settings");
+    search.font = [UIFont systemFontOfSize:16.0];
+    search.textColor = UIColor.labelColor;
+    search.clearButtonMode = UITextFieldViewModeWhileEditing;
+    search.returnKeyType = UIReturnKeyDone;
+    search.autocorrectionType = UITextAutocorrectionTypeNo;
+    search.autocapitalizationType = UITextAutocapitalizationTypeNone;
+    search.tintColor = YTKACEAccentColor();
+    search.delegate = self;
+    [search addTarget:self action:@selector(dismissKeyboard)
+     forControlEvents:UIControlEventEditingDidEndOnExit];
+    [search addTarget:self action:@selector(searchTextChanged:)
+     forControlEvents:UIControlEventEditingChanged];
+    [pill addSubview:search];
+    self.searchField = search;
+    self.searchPill = pill;
+    [header addSubview:pill];
+
     return header;
+}
+
+- (void)dismissKeyboard {
+    [self.searchField resignFirstResponder];
+}
+
+- (BOOL)textFieldShouldReturn:(UITextField *)textField {
+    [textField resignFirstResponder];
+    return YES;
+}
+
+- (BOOL)gestureRecognizer:(UIGestureRecognizer *)recognizer
+       shouldReceiveTouch:(UITouch *)touch {
+    (void)recognizer;
+    if (!self.searchField.isFirstResponder) return NO;
+    return ![touch.view isDescendantOfView:self.searchPill];
+}
+
+- (void)searchTextChanged:(UITextField *)field {
+    NSString *query = [field.text stringByTrimmingCharactersInSet:
+        NSCharacterSet.whitespaceCharacterSet];
+    if (query.length == 0) {
+        self.searchResults = nil;
+        [self.searchChild willMoveToParentViewController:nil];
+        [self.searchChild.view removeFromSuperview];
+        [self.searchChild removeFromParentViewController];
+        self.searchChild = nil;
+        self.tableView.hidden = NO;
+        [self.tableView reloadData];
+        return;
+    }
+    self.searchResults = YTKACEFilterSettings(query);
+    NSArray<NSString *> *titles = @[];
+    NSArray *sections = YTKACESearchResultSections(query, &titles);
+    if (self.searchChild == nil) {
+        UIViewController *child =
+            YTKACEMakeSettingsResultsController(sections, titles);
+        [self addChildViewController:child];
+        [self.view addSubview:child.view];
+        [child didMoveToParentViewController:self];
+        [self.navigationController setNavigationBarHidden:YES animated:NO];
+        self.searchChild = child;
+        if ([child isKindOfClass:UITableViewController.class]) {
+            UITableView *inner = ((UITableViewController *)child).tableView;
+            inner.contentInsetAdjustmentBehavior =
+                UIScrollViewContentInsetAdjustmentNever;
+            inner.keyboardDismissMode =
+                UIScrollViewKeyboardDismissModeOnDrag;
+        }
+        self.tableView.hidden = YES;
+        [self.tableView reloadData];
+    } else {
+        YTKACEUpdateSettingsResultsController(self.searchChild, sections, titles);
+    }
+    [self layoutSearchResults];
 }
 
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView {
     (void)tableView;
-    return 5;
+    return self.searchResults != nil ? 0 : 4;
 }
 
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
     (void)tableView;
+    if (self.searchResults != nil) {
+        return self.searchResults.count == 0 ? 1 : (NSInteger)self.searchResults.count;
+    }
+    section += 1;
     switch (section) {
         case 0: return 1;
         case 1: return 4;
@@ -323,6 +468,10 @@ UIViewController *YTKACEMakeDownloadLogController(void) {
 
 - (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section {
     (void)tableView;
+    if (self.searchResults != nil) {
+        return self.searchResults.count == 0 ? @"" : YTKACELocalized(@"RESULTS");
+    }
+    section += 1;
     return @[@"", YTKACELocalized(@"MAIN"), YTKACELocalized(@"VIDEO"),
              YTKACELocalized(@"APP"), YTKACELocalized(@"ABOUT")][(NSUInteger)section];
 }
@@ -347,7 +496,9 @@ UIViewController *YTKACEMakeDownloadLogController(void) {
 
 - (CGFloat)tableView:(UITableView *)tableView heightForRowAtIndexPath:(NSIndexPath *)indexPath {
     (void)tableView;
-    if (indexPath.section == 0) return 68.0;
+    if (self.searchResults != nil) return 62.0;
+    indexPath = [NSIndexPath indexPathForRow:indexPath.row
+                                   inSection:indexPath.section + 1];
     if (indexPath.section == 4 && indexPath.row == 1) {
         return 92.0;
     }
@@ -356,27 +507,14 @@ UIViewController *YTKACEMakeDownloadLogController(void) {
 
 - (CGFloat)tableView:(UITableView *)tableView heightForHeaderInSection:(NSInteger)section {
     (void)tableView;
-    return section == 0 ? 1.0 : 30.0;
+    (void)section;
+    return 30.0;
 }
 
 - (CGFloat)tableView:(UITableView *)tableView heightForFooterInSection:(NSInteger)section {
     (void)tableView;
-    return section == 0 ? 40.0 : 8.0;
-}
-
-- (UIView *)tableView:(UITableView *)tableView viewForFooterInSection:(NSInteger)section {
-    if (section != 0) return nil;
-    UIView *footer = [[UIView alloc] initWithFrame:CGRectMake(0.0, 0.0,
-        CGRectGetWidth(tableView.bounds), 40.0)];
-    footer.backgroundColor = YTKACERootBackground();
-    UILabel *label = [[UILabel alloc] initWithFrame:CGRectMake(24.0, 0.0,
-        MAX(0.0, CGRectGetWidth(tableView.bounds) - 48.0), 18.0)];
-    label.autoresizingMask = UIViewAutoresizingFlexibleWidth;
-    label.text = YTKACELocalized(@"Save your changes with the checkmark above.");
-    label.font = [UIFont systemFontOfSize:13.0];
-    label.textColor = UIColor.secondaryLabelColor;
-    [footer addSubview:label];
-    return footer;
+    (void)section;
+    return 8.0;
 }
 
 - (UITableViewCell *)baseCellForTableView:(UITableView *)tableView
@@ -409,25 +547,32 @@ UIViewController *YTKACEMakeDownloadLogController(void) {
 
 - (UITableViewCell *)tableView:(UITableView *)tableView
          cellForRowAtIndexPath:(NSIndexPath *)indexPath {
-    if (indexPath.section == 0) {
-        UITableViewCell *cell = [self baseCellForTableView:tableView style:UITableViewCellStyleSubtitle];
-        cell.textLabel.text = YTKACELocalized(@"Enabled");
-        cell.textLabel.font = [UIFont systemFontOfSize:18.0 weight:UIFontWeightSemibold];
-        cell.detailTextLabel.text = nil;
-        [self configureImageForCell:cell asset:@"" symbol:@"power"];
-        UILabel *status = [[UILabel alloc] initWithFrame:CGRectMake(0.0, 0.0, 72.0, 28.0)];
-        status.text = YTKACELocalized(@"ACTIVE");
-        status.textAlignment = NSTextAlignmentCenter;
-        status.font = [UIFont systemFontOfSize:11.0 weight:UIFontWeightBold];
-        status.textColor = UIColor.systemGreenColor;
-        status.backgroundColor = [UIColor.systemGreenColor colorWithAlphaComponent:0.14];
-        status.layer.cornerRadius = 14.0;
-        status.layer.masksToBounds = YES;
-        cell.accessoryView = status;
-        cell.selectionStyle = UITableViewCellSelectionStyleNone;
+    if (self.searchResults != nil) {
+        UITableViewCell *cell = [self baseCellForTableView:tableView
+                                                     style:UITableViewCellStyleSubtitle];
+        if (self.searchResults.count == 0) {
+            cell.textLabel.text = YTKACELocalized(@"No matching settings");
+            cell.textLabel.font = [UIFont systemFontOfSize:16.0];
+            cell.textLabel.textColor = UIColor.secondaryLabelColor;
+            cell.detailTextLabel.text = nil;
+            cell.imageView.image = nil;
+            cell.accessoryType = UITableViewCellAccessoryNone;
+            cell.selectionStyle = UITableViewCellSelectionStyleNone;
+            return cell;
+        }
+        NSDictionary *record = self.searchResults[(NSUInteger)indexPath.row];
+        cell.textLabel.text = record[@"title"];
+        NSString *header = record[@"header"];
+        cell.detailTextLabel.text = header.length != 0
+            ? [NSString stringWithFormat:@"%@ › %@", record[@"pageTitle"], header]
+            : record[@"pageTitle"];
+        cell.imageView.image = nil;
+        cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+        cell.selectionStyle = UITableViewCellSelectionStyleDefault;
         return cell;
     }
-
+    indexPath = [NSIndexPath indexPathForRow:indexPath.row
+                                   inSection:indexPath.section + 1];
     if (indexPath.section == 1) {
         NSArray *titles = @[YTKACELocalized(@"Player"), YTKACELocalized(@"SponsorBlock"),
                             YTKACELocalized(@"Tabs"), YTKACELocalized(@"Gestures")];
@@ -523,14 +668,21 @@ UIViewController *YTKACEMakeDownloadLogController(void) {
 
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
     [tableView deselectRowAtIndexPath:indexPath animated:YES];
-    if (indexPath.section == 4 && indexPath.row == 0) {
+    if (self.searchResults != nil) {
+        if (self.searchResults.count == 0) return;
+        [self.searchField resignFirstResponder];
+        YTKACEOpenSettingsRecord(self.searchResults[(NSUInteger)indexPath.row], self);
+        return;
+    }
+    const NSInteger group = indexPath.section + 1;
+    if (group == 4 && indexPath.row == 0) {
         NSURL *URL = [NSURL URLWithString:@"https://github.com/itzzace/ytkace"];
         [UIApplication.sharedApplication openURL:URL options:@{}
                                completionHandler:nil];
         return;
     }
     UIViewController *controller = nil;
-    if (indexPath.section == 2 && (indexPath.row == 3 || indexPath.row == 4)) {
+    if (group == 2 && (indexPath.row == 3 || indexPath.row == 4)) {
             NSString *title = indexPath.row == 3 ? YTKACELocalized(@"Wi-Fi Quality") : YTKACELocalized(@"Cellular Quality");
             NSString *key = indexPath.row == 3 ? @"YTKACE.Preference.Playback.WiFiQuality" : @"YTKACE.Preference.Playback.CellularQuality";
             NSArray *titles = @[YTKACELocalized(@"Auto"), @"2160p60", @"2160p", @"1440p60", @"1440p",
@@ -545,7 +697,7 @@ UIViewController *YTKACEMakeDownloadLogController(void) {
                 });
             return;
     }
-    if (indexPath.section == 1) {
+    if (group == 1) {
         NSArray *builders = @[
             [^UIViewController *{ return YTKACEMakePlayerControlsController(); } copy],
             [^UIViewController *{ return YTKACEMakeSponsorBlockController(); } copy],
@@ -554,7 +706,7 @@ UIViewController *YTKACEMakeDownloadLogController(void) {
         ];
         UIViewController *(^builder)(void) = builders[(NSUInteger)indexPath.row];
         controller = builder();
-    } else if (indexPath.section == 2) {
+    } else if (group == 2) {
         NSArray *builders = @[
             [^UIViewController *{ return YTKACEMakeOverlayOptionsController(); } copy],
             [^UIViewController *{ return YTKACEMakeStreamingOptionsController(); } copy],
@@ -564,7 +716,7 @@ UIViewController *YTKACEMakeDownloadLogController(void) {
         ];
         UIViewController *(^builder)(void) = builders[(NSUInteger)indexPath.row];
         controller = builder();
-    } else if (indexPath.section == 3) {
+    } else if (group == 3) {
         NSArray *builders = @[
             [^UIViewController *{ return YTKACEMakeNavigationOptionsController(); } copy],
             [^UIViewController *{ return YTKACEMakeMiscOptionsController(); } copy]

@@ -43,6 +43,7 @@ static NSArray<NSDictionary *> *YTKACESearchIndex(void) {
                 NSString *subtitle = [item[@"subtitle"] isKindOfClass:NSString.class]
                     ? item[@"subtitle"] : @"";
                 [records addObject:@{
+                    @"item": item,
                     @"pageID": page[@"id"],
                     @"pageTitle": pageTitle,
                     @"header": header,
@@ -249,4 +250,29 @@ void YTKACEPresentSettingsSearchOverlay(UIViewController *host) {
         UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     [host.view addSubview:overlay.view];
     [overlay didMoveToParentViewController:host];
+}
+
+NSArray<NSArray<NSDictionary *> *> *YTKACESearchResultSections(
+        NSString *query, NSArray<NSString *> **sectionTitles) {
+    NSArray<NSDictionary *> *matches = YTKACEFilterSettings(query);
+    NSMutableArray<NSString *> *titles = [NSMutableArray array];
+    NSMutableArray<NSMutableArray<NSDictionary *> *> *sections =
+        [NSMutableArray array];
+    for (NSDictionary *record in matches) {
+        NSDictionary *item = record[@"item"];
+        if (![item isKindOfClass:NSDictionary.class]) continue;
+        NSString *page = record[@"pageTitle"] ?: @"";
+        NSString *area = record[@"header"] ?: @"";
+        NSString *group = area.length != 0
+            ? [NSString stringWithFormat:@"%@ › %@", page, area] : page;
+        NSUInteger index = [titles indexOfObject:group];
+        if (index == NSNotFound) {
+            [titles addObject:group];
+            [sections addObject:[NSMutableArray array]];
+            index = titles.count - 1;
+        }
+        [sections[index] addObject:item];
+    }
+    if (sectionTitles != NULL) *sectionTitles = [titles copy];
+    return [sections copy];
 }

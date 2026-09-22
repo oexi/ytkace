@@ -6,8 +6,9 @@ An open-source YouTube enhancement for iOS.
 
 | Area | Included |
 |---|---|
-| Downloads | Video, audio and Shorts downloads; queues; sorting; backup and restore |
-| Playback | Background playback, PiP, loop, speed controls, default speed, gestures, tap to seek, and Simplified Chinese auto-translate |
+| Downloads | Video, audio, Shorts and whole-playlist downloads; save to the library, Photos or the share sheet; sorting; backup and restore |
+| Queue | Play next or play last without Premium, with reorder, swipe to remove, shuffle, loop and clear |
+| Playback | Background playback, PiP, loop, speed controls, default speed, gestures, tap to seek, Simplified Chinese auto-translate and extended auto-translate for all caption languages |
 | SponsorBlock | Category controls, progress markers, skip modes and configurable alerts |
 | Interface | OLED mode, overlay controls, navigation cleanup and native share sheets |
 | Tabs | Hide, reorder and add YouTube destinations |
@@ -16,18 +17,18 @@ An open-source YouTube enhancement for iOS.
 
 ## Compatibility
 
-- **iOS:** 16.0 and newer
+- **iOS:** 15.0 and newer (tweak packages); the prebuilt IPAs follow their YouTube base
 - **Architecture:** arm64
-- **YTKACE:** 0.9.3
+- **YTKACE:** 1.0.1
 
-YouTube 21.36.6 requires iOS 17, so two IPAs are published:
+YouTube 21.38.2 requires iOS 17, so two IPAs are published:
 
 | IPA | YouTube base | iOS |
 | --- | --- | --- |
-| `YTKACE_0.9.3_YouTube_iOS16_21.33.6.ipa` | 21.33.6 | 16.0 and newer |
-| `YTKACE_0.9.3_YouTube_21.36.6.ipa` | 21.36.6 | 17.0 and newer |
+| `YTKACE_1.0.1_YouTube_iOS16_21.33.6.ipa` | 21.33.6 | 16.0 and newer |
+| `YTKACE_1.0.1_YouTube_21.38.2.ipa` | 21.38.2 | 17.0 and newer |
 
-Pick the 21.36.6 build unless you are on iOS 16. Either one installs with TrollStore or a developer-certificate sideloader.
+Pick the 21.38.2 build unless you are on iOS 16. Either one installs with TrollStore or a developer-certificate sideloader.
 
 ## Install
 
@@ -54,7 +55,7 @@ The IPA workflow publishes or refreshes the matching GitHub Release and regenera
 
 Fork the repository, enable Actions, open the **IPA** workflow and provide a direct link to a decrypted YouTube IPA you are legally allowed to use. The completed workflow provides the injected IPA as an artifact. The **Deb** workflow builds the tweak package.
 
-To build both IPAs in one run, fill in the second URL field as well: the workflow takes an iOS 16 base (21.33.6) and an optional iOS 17+ base (21.36.6), and uploads them as separate artifacts. Leaving the second field empty builds a single IPA. Successful runs also create or update the `v<YTKACE version>` release, attach the IPA files, and publish `altstore-source.json` as a release asset.
+To build both IPAs in one run, fill in the second URL field as well: the workflow takes an iOS 16 base (21.33.6) and an optional iOS 17+ base (21.38.2), and uploads them as separate artifacts. Leaving the second field empty builds a single IPA. Successful runs also create or update the `v<YTKACE version>` release, attach the IPA files, and publish `altstore-source.json` as a release asset.
 
 ## Settings
 

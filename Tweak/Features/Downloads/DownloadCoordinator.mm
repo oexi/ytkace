@@ -1,4 +1,5 @@
 #import "DownloadCoordinator.h"
+#import "../../YTKACE.h"
 #import "DownloadLog.h"
 #import "DownloadProgressView.h"
 #import "FFmpegMuxer.h"
@@ -36,6 +37,9 @@
 @property(nonatomic, assign) int64_t videoBytes;
 @property(nonatomic, strong, nullable) NSURL *savedURL;
 @property(nonatomic, assign) BOOL savesToPhotos;
+@property(nonatomic, assign) BOOL sharesFile;
+@property(nonatomic, strong, nullable) NSURL *captionURL;
+@property(nonatomic, copy, nullable) NSString *captionLanguage;
 @end
 
 static const void *YTKACEShortsFullscreenKey = &YTKACEShortsFullscreenKey;
@@ -51,8 +55,8 @@ static BOOL YTKACEContainsShortsDownloadButton(UIView *view) {
     return NO;
 }
 
-static void YTKACESetShortsOverlayFullscreen(UIView *overlay,
-                                              BOOL fullscreen) {
+void YTKACESetShortsOverlayFullscreen(UIView *overlay,
+                                      BOOL fullscreen) {
     for (UIView *subview in overlay.subviews) {
         if (YTKACEContainsShortsDownloadButton(subview)) continue;
         if (fullscreen) {
@@ -84,7 +88,12 @@ static void YTKACESetShortsOverlayFullscreen(UIView *overlay,
 @property(nonatomic, strong) NSMutableDictionary<NSNumber *, YTKACEDownloadJob *> *jobs;
 @property(nonatomic, strong) NSMutableDictionary<NSString *, YTKACEDownloadJob *> *activeJobs;
 @property(nonatomic, weak) UIView *downloadSourceView;
+@property(nonatomic, strong, nullable) id externalResponse;
+@property(nonatomic, weak) UIView *externalSourceView;
 @property(nonatomic, assign) BOOL pendingSavesToPhotos;
+@property(nonatomic, assign) BOOL pendingSharesFile;
+@property(nonatomic, assign) BOOL batchSharing;
+@property(nonatomic, strong) NSMutableArray<NSURL *> *batchShareURLs;
 - (void)resolveSaveDestinationFromView:(nullable UIView *)sourceView
                                   then:(dispatch_block_t)continuation;
 - (void)showAudioLanguagesForVideo:(nullable YTKACEStreamOption *)videoOption
@@ -94,6 +103,9 @@ static void YTKACESetShortsOverlayFullscreen(UIView *overlay,
                          audio:(YTKACEStreamOption *)audioOption
                      audioOnly:(BOOL)audioOnly
                       category:(NSString *)category;
+- (void)presentShareSheetForURL:(NSURL *)url;
+- (void)resolveAudioDestinationFromView:(nullable UIView *)sourceView
+                                   then:(dispatch_block_t)continuation;
 - (void)mergeVideoURL:(NSURL *)videoURL audioURL:(NSURL *)audioURL
                    job:(YTKACEDownloadJob *)job;
 - (void)saveCompletedURL:(NSURL *)URL job:(YTKACEDownloadJob *)job
@@ -107,6 +119,8 @@ static void YTKACESetShortsOverlayFullscreen(UIView *overlay,
 
 static NSString * const YTKACESaveLocationKey =
     @"YTKACE.Preference.Downloads.SaveLocation";
+static NSString * const YTKACEAudioSaveLocationKey =
+    @"YTKACE.Preference.Downloads.AudioSaveLocation";
 
 void YTKACESaveVideoToPhotosFile(NSURL *url,
                                  void (^completion)(BOOL, NSError *)) {
@@ -197,6 +211,7 @@ void YTKACESaveVideoToPhotosFile(NSURL *url,
         YTKACEDownloadProgressView.sharedView.cancelHandler = ^(NSString *identifier) {
             YTKACEDownloadJob *job = weakSelf.activeJobs[identifier];
             [job.sabrTask cancel];
+            YTKACEFFmpegCancelConversion(identifier);
         };
     }
     return self;
@@ -394,6 +409,7 @@ void YTKACESaveVideoToPhotosFile(NSURL *url,
                            subtitle:(NSString *)subtitle
                          sourceView:(UIView *)sourceView
                             actions:(NSArray<NSDictionary *> *)actions {
+
     id presenter = [self topViewController];
     UIResponder *responder = sourceView;
     id sourceController = nil;
@@ -495,8 +511,10 @@ void YTKACESaveVideoToPhotosFile(NSURL *url,
                                   then:(dispatch_block_t)continuation {
     const NSInteger mode = [NSUserDefaults.standardUserDefaults
         integerForKey:YTKACESaveLocationKey];
+    YTKACEDownloadLog(@"save", @"destination mode=%ld", (long)mode);
     if (mode != 2) {
         self.pendingSavesToPhotos = mode == 1;
+        self.pendingSharesFile = mode == 3;
         if (continuation != NULL) continuation();
         return;
     }
@@ -505,11 +523,55 @@ void YTKACESaveVideoToPhotosFile(NSURL *url,
         [self sheetAction:YTKACELocalized(@"YTKACE Library") icon:@"arrow.down.circle"
             secondary:nil handler:^{
                 weakSelf.pendingSavesToPhotos = NO;
+                weakSelf.pendingSharesFile = NO;
                 if (continuation != NULL) continuation();
             }],
         [self sheetAction:YTKACELocalized(@"Photos") icon:@"photo.on.rectangle"
             secondary:nil handler:^{
                 weakSelf.pendingSavesToPhotos = YES;
+                weakSelf.pendingSharesFile = NO;
+                if (continuation != NULL) continuation();
+            }],
+        [self sheetAction:YTKACELocalized(@"Share Sheet")
+            icon:@"square.and.arrow.up" secondary:nil handler:^{
+                weakSelf.pendingSavesToPhotos = NO;
+                weakSelf.pendingSharesFile = YES;
+                if (continuation != NULL) continuation();
+            }]
+    ];
+    [self presentNativeSheetWithTitle:YTKACELocalized(@"Save to")
+        subtitle:nil sourceView:sourceView actions:actions];
+}
+
+- (void)resolveAudioDestinationFromView:(UIView *)sourceView
+                                   then:(dispatch_block_t)continuation {
+    const NSInteger mode = [NSUserDefaults.standardUserDefaults
+        integerForKey:YTKACEAudioSaveLocationKey];
+    YTKACEDownloadLog(@"save", @"audio destination mode=%ld", (long)mode);
+    if (mode != 2) {
+        self.pendingSavesToPhotos = mode == 1;
+        self.pendingSharesFile = mode == 3;
+        if (continuation != NULL) continuation();
+        return;
+    }
+    __weak YTKACEDownloadCoordinator *weakSelf = self;
+    NSArray *actions = @[
+        [self sheetAction:YTKACELocalized(@"YTKACE Library")
+            icon:@"arrow.down.circle" secondary:nil handler:^{
+                weakSelf.pendingSavesToPhotos = NO;
+                weakSelf.pendingSharesFile = NO;
+                if (continuation != NULL) continuation();
+            }],
+        [self sheetAction:YTKACELocalized(@"Photos")
+            icon:@"photo.on.rectangle" secondary:nil handler:^{
+                weakSelf.pendingSavesToPhotos = YES;
+                weakSelf.pendingSharesFile = NO;
+                if (continuation != NULL) continuation();
+            }],
+        [self sheetAction:YTKACELocalized(@"Share Sheet")
+            icon:@"square.and.arrow.up" secondary:nil handler:^{
+                weakSelf.pendingSavesToPhotos = NO;
+                weakSelf.pendingSharesFile = YES;
                 if (continuation != NULL) continuation();
             }]
     ];
@@ -521,11 +583,53 @@ void YTKACESaveVideoToPhotosFile(NSURL *url,
     [self showDownloadMenuFromButton:nil];
 }
 
+- (UIView *)sheetAnchorForView:(UIView *)source {
+    UIViewController *top = [self topViewController];
+    UIView *host = top.viewIfLoaded;
+    if (host == nil || host.window == nil) return source;
+    if (source != nil && source.window != nil &&
+        [source isDescendantOfView:host]) {
+        return source;
+    }
+    static UIView *anchor;
+    if (anchor == nil) {
+        anchor = [[UIView alloc] initWithFrame:CGRectZero];
+        anchor.userInteractionEnabled = NO;
+        anchor.backgroundColor = UIColor.clearColor;
+        anchor.accessibilityIdentifier = @"YTKACE Sheet Anchor";
+    }
+    if (anchor.superview != host) {
+        [anchor removeFromSuperview];
+        [host addSubview:anchor];
+    }
+    CGRect frame;
+    if (source != nil && source.window != nil) {
+        frame = [source convertRect:source.bounds toView:host];
+    } else {
+        frame = CGRectMake(CGRectGetWidth(host.bounds) - 60.0,
+                           CGRectGetHeight(host.bounds) * 0.5, 44.0, 44.0);
+    }
+    anchor.frame = frame;
+    [host sendSubviewToBack:anchor];
+    return anchor;
+}
+
+- (void)showDownloadMenuForResponse:(id)response sourceView:(UIView *)sourceView {
+    sourceView = [self sheetAnchorForView:sourceView];
+    self.externalResponse = response;
+    self.externalSourceView = sourceView;
+    [self showDownloadMenuFromButton:nil];
+    self.externalResponse = nil;
+    self.externalSourceView = nil;
+}
+
 - (void)showDownloadMenuFromButton:(UIButton *)button {
-    if (!YTKACEFeatureEnabled(YTKACEDownloadKey)) {
+    if (!YTKACEDownloadsEnabled()) {
         return;
     }
-    id currentResponse = [self videoPlayerResponseFromView:button];
+    UIView *anchor = self.externalSourceView ?: button;
+    id currentResponse = self.externalResponse
+        ? self.externalResponse : [self videoPlayerResponseFromView:button];
     if (currentResponse != nil) {
         self.playerResponse = currentResponse;
     }
@@ -533,35 +637,39 @@ void YTKACESaveVideoToPhotosFile(NSURL *url,
         [self showAlertWithTitle:@"YTKACE" message:YTKACELocalized(@"No active video was found.")];
         return;
     }
-    self.downloadSourceView = button;
+    self.downloadSourceView = anchor;
 
     __weak YTKACEDownloadCoordinator *weakSelf = self;
     UIImage *chevron = [self menuIcon:@"chevron.right"];
     NSArray *actions = @[
         [self sheetAction:YTKACELocalized(@"Download Video") icon:@"play"
             secondary:chevron handler:^{
-                [weakSelf resolveSaveDestinationFromView:button then:^{
+                [weakSelf resolveSaveDestinationFromView:anchor then:^{
                     [weakSelf startVideoDownloadForCategory:@"Video"];
                 }];
             }],
         [self sheetAction:YTKACELocalized(@"Download Audio") icon:@"music.note"
-            secondary:chevron handler:^{ [weakSelf startAudioDownload]; }],
+            secondary:chevron handler:^{
+                [weakSelf resolveAudioDestinationFromView:anchor then:^{
+                    [weakSelf startAudioDownload];
+                }];
+            }],
         [self sheetAction:YTKACELocalized(@"Play in External Player") icon:@"play.circle"
-            secondary:chevron handler:^{ [weakSelf showExternalPlayerMenuFromView:button]; }],
+            secondary:chevron handler:^{ [weakSelf showExternalPlayerMenuFromView:anchor]; }],
         [self sheetAction:YTKACELocalized(@"Save Image") icon:@"photo"
             secondary:nil handler:^{ [weakSelf saveThumbnail]; }],
         [self sheetAction:YTKACELocalized(@"Copy Information") icon:@"doc.on.doc"
             secondary:chevron handler:^{
                 dispatch_after(dispatch_time(DISPATCH_TIME_NOW,
                     (int64_t)(0.12 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-                        [weakSelf showCopyInformationMenuFromView:button];
+                        [weakSelf showCopyInformationMenuFromView:anchor];
                     });
             }]
     ];
     [self presentNativeSheetWithTitle:
         [YTKACEStreamResolver authorFromPlayerResponse:self.playerResponse]
         subtitle:[YTKACEStreamResolver titleFromPlayerResponse:self.playerResponse]
-        sourceView:button actions:actions];
+        sourceView:anchor actions:actions];
 }
 
 - (void)showCompactNotice:(NSString *)message {
@@ -704,7 +812,37 @@ void YTKACESaveVideoToPhotosFile(NSURL *url,
         current = current.nextResponder;
     }
     presenter = presenter ?: [self topViewController];
-    AVPlayer *player = [AVPlayer playerWithURL:URL];
+    AVURLAsset *asset = [AVURLAsset URLAssetWithURL:URL options:nil];
+    AVPlayerItem *item = [AVPlayerItem playerItemWithAsset:asset];
+    if (![NSUserDefaults.standardUserDefaults
+            boolForKey:@"YTKACE.Preference.Downloads.SubtitlesHidden"]) {
+        NSString *key = @"availableMediaCharacteristicsWithMediaSelectionOptions";
+        [asset loadValuesAsynchronouslyForKeys:@[key] completionHandler:^{
+            dispatch_async(dispatch_get_main_queue(), ^{
+                AVMediaSelectionGroup *group = [asset
+                    mediaSelectionGroupForMediaCharacteristic:
+                        AVMediaCharacteristicLegible];
+                if (group == nil) {
+                    YTKACEDownloadLog(@"subs", @"default player no legible group");
+                    return;
+                }
+                for (AVMediaSelectionOption *option in group.options) {
+                    if (option.displayName.length == 0) continue;
+                    if ([option hasMediaCharacteristic:
+                            AVMediaCharacteristicContainsOnlyForcedSubtitles]) {
+                        continue;
+                    }
+                    [item selectMediaOption:option inMediaSelectionGroup:group];
+                    YTKACEDownloadLog(@"subs", @"default player selected %@",
+                                      option.displayName);
+                    return;
+                }
+                YTKACEDownloadLog(@"subs", @"default player %lu options, none used",
+                                  (unsigned long)group.options.count);
+            });
+        }];
+    }
+    AVPlayer *player = [AVPlayer playerWithPlayerItem:item];
     AVPlayerViewController *controller = [AVPlayerViewController new];
     controller.player = player;
     controller.showsPlaybackControls = YES;
@@ -806,7 +944,7 @@ void YTKACESaveVideoToPhotosFile(NSURL *url,
 
 - (void)presentShortsDownloadMenuFromView:(UIView *)sourceView
                                   response:(id)response {
-    if (!YTKACEFeatureEnabled(YTKACEDownloadKey) || response == nil) {
+    if (!YTKACEDownloadsEnabled() || response == nil) {
         [self showAlertWithTitle:@"YTKACE" message:YTKACELocalized(@"No active Short was found.")];
         return;
     }
@@ -830,7 +968,11 @@ void YTKACESaveVideoToPhotosFile(NSURL *url,
                 }];
             }],
         [self sheetAction:YTKACELocalized(@"Download Audio") icon:@"music.note"
-            secondary:chevron handler:^{ [weakSelf startAudioDownload]; }],
+            secondary:chevron handler:^{
+                [weakSelf resolveAudioDestinationFromView:sourceView then:^{
+                    [weakSelf startAudioDownload];
+                }];
+            }],
         [self sheetAction:fullscreenTitle icon:fullscreenIcon
             secondary:chevron handler:^{
                 [weakSelf toggleShortsFullscreenFromView:sourceView];
@@ -1045,7 +1187,10 @@ void YTKACESaveVideoToPhotosFile(NSURL *url,
     job.videoOption = videoOption;
     job.audioOption = audioOption;
     job.audioOnly = audioOnly;
-    job.savesToPhotos = !audioOnly && self.pendingSavesToPhotos;
+    job.savesToPhotos = self.pendingSavesToPhotos;
+    job.sharesFile = self.pendingSharesFile;
+    YTKACEDownloadLog(job.identifier, @"destination photos=%d share=%d",
+        job.savesToPhotos, job.sharesFile);
     self.activeJobs[job.identifier] = job;
     [YTKACEDownloadProgressView.sharedView beginJob:job.identifier
         title:job.title thumbnailURL:job.thumbnailURL];
@@ -1055,7 +1200,134 @@ void YTKACESaveVideoToPhotosFile(NSURL *url,
         (unsigned long)self.activeJobs.count);
     [YTKACEDownloadProgressView.sharedView updateJob:job.identifier
         stage:YTKACELocalized(@"Preparing download") progress:0.0 downloadedBytes:0 totalBytes:0];
-    [self startSABRJob:job];
+    [self chooseCaptionsForJob:job then:^{
+        [self startSABRJob:job];
+    }];
+}
+
+- (void)chooseCaptionsForJob:(YTKACEDownloadJob *)job
+                        then:(dispatch_block_t)handler {
+    if (job.audioOnly ||
+        !YTKACEFeatureEnabled(@"YTKACE.Preference.Downloads.Subtitles")) {
+        handler();
+        return;
+    }
+    NSArray<NSDictionary *> *choices =
+        YTKACECaptionChoicesForResponse(job.playerResponse);
+    if (choices.count == 0) {
+        YTKACEDownloadLog(@"subs", @"no caption tracks for %@", job.videoID);
+        handler();
+        return;
+    }
+    if (choices.count == 1) {
+        job.captionURL = choices.firstObject[@"url"];
+        job.captionLanguage = choices.firstObject[@"language"];
+        handler();
+        return;
+    }
+    NSMutableArray<NSDictionary *> *actions = [NSMutableArray array];
+    for (NSDictionary *choice in choices) {
+        [actions addObject:@{
+            @"title": choice[@"label"],
+            @"handler": ^{
+                job.captionURL = choice[@"url"];
+                job.captionLanguage = choice[@"language"];
+                handler();
+            }
+        }];
+    }
+    [actions addObject:@{
+        @"title": YTKACELocalized(@"No Subtitles"),
+        @"handler": ^{ handler(); }
+    }];
+    UIView *anchor = self.downloadSourceView ?: self.externalSourceView;
+    [self presentNativeSheetWithTitle:YTKACELocalized(@"Subtitles")
+                             subtitle:YTKACELocalized(@"Choose a caption track")
+                           sourceView:[self sheetAnchorForView:anchor]
+                              actions:actions];
+}
+
+- (NSDictionary *)nativeSheetAction:(NSString *)title
+                               icon:(NSString *)icon
+                            handler:(dispatch_block_t)handler {
+    return [self sheetAction:title icon:icon secondary:nil handler:handler];
+}
+
+- (void)presentPlaylistSheetWithTitle:(NSString *)title
+                             subtitle:(NSString *)subtitle
+                           sourceView:(UIView *)sourceView
+                              actions:(NSArray<NSDictionary *> *)actions {
+    [self presentNativeSheetWithTitle:title subtitle:subtitle
+                           sourceView:sourceView actions:actions];
+}
+
+- (NSUInteger)activeJobCount {
+    return self.activeJobs.count;
+}
+
+- (void)resolvePlaylistDestinationFromView:(UIView *)sourceView
+                                 audioOnly:(BOOL)audioOnly
+                                      then:(void (^)(BOOL, BOOL))handler {
+    NSString *key = audioOnly ? YTKACEAudioSaveLocationKey
+                              : YTKACESaveLocationKey;
+    const NSInteger mode =
+        [NSUserDefaults.standardUserDefaults integerForKey:key];
+    YTKACEDownloadLog(@"save", @"playlist destination mode=%ld audio=%d",
+        (long)mode, audioOnly);
+    if (mode != 2) {
+        handler(mode == 1, mode == 3);
+        return;
+    }
+    NSMutableArray *actions = [NSMutableArray array];
+    [actions addObject:[self sheetAction:YTKACELocalized(@"YTKACE Library")
+        icon:@"arrow.down.circle" secondary:nil
+        handler:^{ handler(NO, NO); }]];
+    [actions addObject:[self sheetAction:YTKACELocalized(@"Photos")
+        icon:@"photo.on.rectangle" secondary:nil
+        handler:^{ handler(YES, NO); }]];
+    [actions addObject:[self sheetAction:YTKACELocalized(@"Share Sheet")
+        icon:@"square.and.arrow.up" secondary:nil
+        handler:^{ handler(NO, YES); }]];
+    [self presentNativeSheetWithTitle:YTKACELocalized(@"Save to")
+        subtitle:nil sourceView:sourceView actions:actions];
+}
+
+- (BOOL)enqueueDownloadForResponse:(id)response
+                           quality:(NSInteger)quality
+                         audioOnly:(BOOL)audioOnly
+                     savesToPhotos:(BOOL)savesToPhotos
+                        sharesFile:(BOOL)sharesFile {
+    if (response == nil) return NO;
+    YTKACEStreamOption *audio =
+        [YTKACEStreamResolver audioOptionsFromPlayerResponse:response].firstObject;
+    if (audio == nil) return NO;
+    YTKACEStreamOption *video = nil;
+    if (!audioOnly) {
+        NSArray<YTKACEStreamOption *> *options =
+            [YTKACEStreamResolver videoOptionsFromPlayerResponse:response];
+        if (options.count == 0) return NO;
+        if (quality > 0) {
+            for (YTKACEStreamOption *option in options) {
+                if (option.height <= quality) {
+                    video = option;
+                    break;
+                }
+            }
+        }
+        if (video == nil) video = options.firstObject;
+    }
+    id previousResponse = self.playerResponse;
+    BOOL previousPhotos = self.pendingSavesToPhotos;
+    BOOL previousShare = self.pendingSharesFile;
+    self.playerResponse = response;
+    self.pendingSavesToPhotos = savesToPhotos;
+    self.pendingSharesFile = sharesFile;
+    [self beginSABRDownloadVideo:video audio:audio audioOnly:audioOnly
+                        category:audioOnly ? @"Audio" : @"Video"];
+    self.playerResponse = previousResponse;
+    self.pendingSavesToPhotos = previousPhotos;
+    self.pendingSharesFile = previousShare;
+    return YES;
 }
 
 - (YTKACEStreamOption *)fallbackVideoForJob:(YTKACEDownloadJob *)job {
@@ -1253,6 +1525,48 @@ void YTKACESaveVideoToPhotosFile(NSURL *url,
     [task resume];
 }
 
+- (void)attachSubtitlesForJob:(YTKACEDownloadJob *)job
+                  destination:(NSURL *)destination
+                         then:(dispatch_block_t)handler {
+    if (job.audioOnly ||
+        !YTKACEFeatureEnabled(@"YTKACE.Preference.Downloads.Subtitles")) {
+        handler();
+        return;
+    }
+    if (job.captionURL == nil) {
+        handler();
+        return;
+    }
+    NSString *language = job.captionLanguage;
+    YTKACEFetchCuesForURL(job.captionURL, ^(NSArray<NSDictionary *> *cues) {
+        if (cues.count == 0) {
+            YTKACEDownloadLog(@"subs", @"no captions for %@", job.identifier);
+            handler();
+            return;
+        }
+        NSURL *staging = [destination.URLByDeletingPathExtension
+            URLByAppendingPathExtension:@"subs.mp4"];
+        [NSFileManager.defaultManager removeItemAtURL:staging error:nil];
+        [YTKACEFFmpegMuxer muxSubtitlesIntoURL:destination
+                                          cues:cues
+                                      language:language
+                                     outputURL:staging
+                                    completion:^(NSError *muxError) {
+            if (muxError == nil &&
+                [NSFileManager.defaultManager fileExistsAtPath:staging.path]) {
+                [NSFileManager.defaultManager removeItemAtURL:destination
+                                                        error:nil];
+                [NSFileManager.defaultManager moveItemAtURL:staging
+                                                      toURL:destination
+                                                      error:nil];
+            } else {
+                [NSFileManager.defaultManager removeItemAtURL:staging error:nil];
+            }
+            handler();
+        }];
+    });
+}
+
 - (void)saveCompletedURL:(NSURL *)URL
                       job:(YTKACEDownloadJob *)job
                 extension:(NSString *)extension {
@@ -1269,19 +1583,131 @@ void YTKACESaveVideoToPhotosFile(NSURL *url,
             error.localizedDescription);
         [self showAlertWithTitle:YTKACELocalized(@"Save failed")
             message:[self failureMessageForError:error job:job]];
-    } else if (job.savesToPhotos) {
+    } else {
+        __weak YTKACEDownloadCoordinator *weakSelf = self;
+        [self attachSubtitlesForJob:job destination:destination then:^{
+            YTKACEDownloadCoordinator *strongSelf = weakSelf;
+            if (strongSelf == nil) return;
+            if (job.savesToPhotos) {
+                YTKACEDownloadLog(job.identifier, @"saved path=%@ pending photos",
+                    destination.path);
+                [strongSelf prepareForPhotosJob:job destination:destination
+                                           then:^(NSURL *ready) {
+                    [strongSelf deliverToPhotosJob:job importURL:ready
+                                        libraryURL:destination];
+                }];
+            } else {
+                [strongSelf writeMetadataForJob:job destination:destination];
+                [YTKACEDownloadProgressView.sharedView finishJob:job.identifier
+                    success:YES message:YTKACELocalized(@"Complete")];
+                YTKACEDownloadLog(job.identifier, @"saved path=%@",
+                                  destination.path);
+                [NSNotificationCenter.defaultCenter
+                    postNotificationName:@"YTKACEDownloadLibraryChanged"
+                                  object:nil];
+                if (job.sharesFile) {
+                    [strongSelf presentShareSheetForURL:destination];
+                }
+            }
+            [strongSelf.activeJobs removeObjectForKey:job.identifier];
+        }];
+        return;
+    }
+    [self.activeJobs removeObjectForKey:job.identifier];
+}
+
+- (void)squareArtworkForJob:(YTKACEDownloadJob *)job
+                       then:(void (^)(NSData *artwork))handler {
+    if (job.thumbnailURL == nil) {
+        handler(nil);
+        return;
+    }
+    NSURLSessionDataTask *task = [NSURLSession.sharedSession
+        dataTaskWithURL:job.thumbnailURL
+      completionHandler:^(NSData *data, __unused NSURLResponse *response,
+                          __unused NSError *error) {
+        UIImage *image = data.length != 0 ? [UIImage imageWithData:data] : nil;
+        if (image == nil) {
+            YTKACEDownloadLog(job.identifier, @"artwork decode failed bytes=%lu",
+                (unsigned long)data.length);
+            handler(nil);
+            return;
+        }
+        const CGFloat side = 720.0;
+        UIGraphicsImageRendererFormat *format =
+            [UIGraphicsImageRendererFormat defaultFormat];
+        format.scale = 1.0;
+        format.opaque = YES;
+        UIGraphicsImageRenderer *renderer =
+            [[UIGraphicsImageRenderer alloc] initWithSize:CGSizeMake(side, side)
+                                                   format:format];
+        UIImage *square = [renderer imageWithActions:
+            ^(UIGraphicsImageRendererContext *context) {
+            [UIColor.blackColor setFill];
+            [context fillRect:CGRectMake(0, 0, side, side)];
+            const CGFloat scale = MIN(side / image.size.width,
+                                      side / image.size.height);
+            const CGSize target = CGSizeMake(image.size.width * scale,
+                                             image.size.height * scale);
+            [image drawInRect:CGRectMake((side - target.width) / 2.0,
+                                         (side - target.height) / 2.0,
+                                         target.width, target.height)];
+        }];
+        NSData *jpeg = UIImageJPEGRepresentation(square, 0.9);
+        YTKACEDownloadLog(job.identifier, @"artwork ready bytes=%lu",
+            (unsigned long)jpeg.length);
+        handler(jpeg);
+    }];
+    [task resume];
+}
+
+- (void)prepareForPhotosJob:(YTKACEDownloadJob *)job
+                destination:(NSURL *)destination
+                       then:(void (^)(NSURL *ready))handler {
+    NSURL *converted = [[NSURL fileURLWithPath:NSTemporaryDirectory()]
+        URLByAppendingPathComponent:[NSString stringWithFormat:@"photos-%@.mp4",
+            job.identifier]];
+    void (^report)(double) = ^(double fraction) {
+        [YTKACEDownloadProgressView.sharedView updateJob:job.identifier
+            stage:YTKACELocalized(@"Converting") progress:fraction
+            downloadedBytes:0 totalBytes:0];
+    };
+    if (job.audioOnly) {
+        [self squareArtworkForJob:job then:^(NSData *artwork) {
+            [YTKACEFFmpegMuxer videoFromAudioURL:destination artworkData:artwork
+                outputURL:converted progress:report completion:^(NSError *error) {
+                handler(error == nil ? converted : destination);
+            }];
+        }];
+        return;
+    }
+    handler(destination);
+}
+
+- (void)deliverToPhotosJob:(YTKACEDownloadJob *)job
+                 importURL:(NSURL *)importURL
+                libraryURL:(NSURL *)libraryURL {
+    {
         [YTKACEDownloadProgressView.sharedView finishJob:job.identifier
             success:YES message:YTKACELocalized(@"Complete")];
-        YTKACEDownloadLog(job.identifier, @"saved path=%@ pending photos",
-            destination.path);
         __weak YTKACEDownloadCoordinator *weakSelf = self;
-        YTKACESaveVideoToPhotosFile(destination, ^(BOOL success, NSError *error) {
+        const BOOL converted = ![importURL isEqual:libraryURL];
+        YTKACESaveVideoToPhotosFile(importURL, ^(BOOL success, NSError *error) {
             if (success) {
-                [NSFileManager.defaultManager removeItemAtURL:destination error:nil];
-                YTKACEDownloadLog(job.identifier, @"moved to photos");
+                [NSFileManager.defaultManager removeItemAtURL:importURL error:nil];
+                if (converted) {
+                    [NSFileManager.defaultManager removeItemAtURL:libraryURL
+                        error:nil];
+                }
+                YTKACEDownloadLog(job.identifier, @"moved to photos converted=%d",
+                    converted);
                 YTKACEShowNotice(YTKACELocalized(@"Saved to Photos"));
             } else {
-                [weakSelf writeMetadataForJob:job destination:destination];
+                if (converted) {
+                    [NSFileManager.defaultManager removeItemAtURL:importURL
+                        error:nil];
+                }
+                [weakSelf writeMetadataForJob:job destination:libraryURL];
                 if (error.code == 3302 &&
                     [error.domain isEqualToString:PHPhotosErrorDomain]) {
                     YTKACEShowNotice(YTKACELocalized(
@@ -1296,15 +1722,52 @@ void YTKACESaveVideoToPhotosFile(NSURL *url,
             [NSNotificationCenter.defaultCenter
                 postNotificationName:@"YTKACEDownloadLibraryChanged" object:nil];
         });
-    } else {
-        [self writeMetadataForJob:job destination:destination];
-        [YTKACEDownloadProgressView.sharedView finishJob:job.identifier
-            success:YES message:YTKACELocalized(@"Complete")];
-        YTKACEDownloadLog(job.identifier, @"saved path=%@", destination.path);
-        [NSNotificationCenter.defaultCenter
-            postNotificationName:@"YTKACEDownloadLibraryChanged" object:nil];
     }
-    [self.activeJobs removeObjectForKey:job.identifier];
+}
+
+- (void)beginBatchSharing {
+    self.batchSharing = YES;
+    self.batchShareURLs = [NSMutableArray array];
+}
+
+- (void)flushBatchSharingFromView:(UIView *)sourceView {
+    NSArray<NSURL *> *urls = [self.batchShareURLs copy];
+    self.batchSharing = NO;
+    self.batchShareURLs = nil;
+    if (urls.count == 0) return;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        UIViewController *top = [self topViewController];
+        if (top == nil) return;
+        UIActivityViewController *controller =
+            [[UIActivityViewController alloc] initWithActivityItems:urls
+                                             applicationActivities:nil];
+        UIView *anchor = [self sheetAnchorForView:sourceView];
+        controller.popoverPresentationController.sourceView = anchor;
+        controller.popoverPresentationController.sourceRect = anchor.bounds;
+        YTKACEDownloadLog(@"save", @"share sheet batch count=%lu",
+            (unsigned long)urls.count);
+        [top presentViewController:controller animated:YES completion:nil];
+    });
+}
+
+- (void)presentShareSheetForURL:(NSURL *)url {
+    if (url == nil) return;
+    if (self.batchSharing) {
+        [self.batchShareURLs addObject:url];
+        return;
+    }
+    dispatch_async(dispatch_get_main_queue(), ^{
+        UIViewController *top = [self topViewController];
+        if (top == nil) return;
+        UIActivityViewController *controller =
+            [[UIActivityViewController alloc] initWithActivityItems:@[url]
+                                             applicationActivities:nil];
+        UIView *anchor = [self sheetAnchorForView:self.downloadSourceView];
+        controller.popoverPresentationController.sourceView = anchor;
+        controller.popoverPresentationController.sourceRect = anchor.bounds;
+        YTKACEDownloadLog(@"save", @"share sheet path=%@", url.lastPathComponent);
+        [top presentViewController:controller animated:YES completion:nil];
+    });
 }
 
 - (void)mergeVideoURL:(NSURL *)videoURL

@@ -30,6 +30,7 @@
 @property(nonatomic, strong) NSMutableDictionary<NSString *, YTKACEDownloadProgressItem *> *items;
 @property(nonatomic, strong) NSMutableArray<NSString *> *activeIdentifiers;
 @property(nonatomic, copy, nullable) NSString *visibleIdentifier;
+@property(nonatomic, copy, nullable) NSString *renderedIdentifier;
 @property(nonatomic, strong) NSTimer *positionTimer;
 @end
 
@@ -206,7 +207,9 @@
     double progress = isfinite(item.progress)
         ? MIN(MAX(item.progress, 0.0), 1.0) : 0.0;
     self.percentLabel.text = [NSString stringWithFormat:@"%.0f%%", progress * 100.0];
-    [self.progressView setProgress:(float)progress animated:YES];
+    BOOL sameItem = [self.renderedIdentifier isEqualToString:item.identifier];
+    [self.progressView setProgress:(float)progress animated:sameItem];
+    self.renderedIdentifier = [item.identifier copy];
     self.thumbnailView.image = item.thumbnail;
     self.cancelButton.hidden = [item.stage isEqualToString:YTKACELocalized(@"Merging")] ||
         [item.stage isEqualToString:YTKACELocalized(@"Complete")] ||
@@ -243,6 +246,12 @@
     [task resume];
 }
 
+- (void)cancelPendingDismiss {
+    [self.card.layer removeAllAnimations];
+    self.card.alpha = 1.0;
+    self.card.transform = CGAffineTransformIdentity;
+}
+
 - (void)beginJob:(NSString *)identifier
            title:(NSString *)title
     thumbnailURL:(NSURL *)thumbnailURL {
@@ -256,7 +265,9 @@
         [self.activeIdentifiers removeObject:identifier];
         [self.activeIdentifiers addObject:identifier];
         self.visibleIdentifier = identifier;
+        [self cancelPendingDismiss];
         [self renderItem:item];
+        [self layoutCard];
         [self loadThumbnailForItem:item];
     });
 }
@@ -304,6 +315,7 @@
                     self.visibleIdentifier = self.activeIdentifiers[nextIndex];
                 }
                 [self renderItem:self.items[self.visibleIdentifier]];
+                [self layoutCard];
                 return;
             }
             self.visibleIdentifier = nil;
