@@ -1,13 +1,17 @@
 #import "../../YTKACE.h"
 #import "../../Runtime/Hooking.h"
 #import "../../Runtime/Preferences.h"
+#import "../Downloads/DownloadLog.h"
 
 #import <UIKit/UIKit.h>
+#import <mach-o/dyld.h>
+#import <mach-o/getsect.h>
+#import <mach-o/loader.h>
+#import <dlfcn.h>
 #import <objc/message.h>
 #import <objc/runtime.h>
 #include <stdlib.h>
 
-static IMP OriginalDeviceIdiom;
 static IMP OriginalAddInteraction;
 static IMP OriginalSemanticContent;
 static IMP OriginalSetSemanticContent;
@@ -74,13 +78,99 @@ static BOOL YTKACEMiniPlayerEnabled(void) {
     return YTKACEFeatureEnabled(@"YTKACE.Preference.Playback.KidsMiniPlayer");
 }
 
+static NSString *const YTKACELayoutIdiomKey = @"YTKACE.Preference.App.LayoutIdiom";
+
+static BOOL YTKACEIdiomForced;
+static UIUserInterfaceIdiom YTKACEForcedIdiom;
+static UIUserInterfaceIdiom YTKACERealIdiom;
+static IMP OriginalDeviceIdiom;
+
+typedef struct {
+    uintptr_t start;
+    uintptr_t end;
+} YTKACETextRange;
+
+static YTKACETextRange YTKACEIdiomRanges[2];
+static NSUInteger YTKACEIdiomRangeCount;
+
+static void YTKACEAddTextRange(const struct mach_header *header) {
+    if (header == NULL || YTKACEIdiomRangeCount >= 2) return;
+    unsigned long size = 0;
+    const uint8_t *text = getsectiondata(
+        (const struct mach_header_64 *)header, "__TEXT", "__text", &size);
+    if (text == NULL || size == 0) return;
+    YTKACEIdiomRanges[YTKACEIdiomRangeCount].start = (uintptr_t)text;
+    YTKACEIdiomRanges[YTKACEIdiomRangeCount].end = (uintptr_t)text + size;
+    YTKACEIdiomRangeCount++;
+}
+
+static void YTKACEComputeIdiomRanges(void) {
+    for (uint32_t index = 0; index < _dyld_image_count(); index++) {
+        const struct mach_header *header = _dyld_get_image_header(index);
+        if (header == NULL) continue;
+        if (header->filetype != MH_EXECUTE) continue;
+        YTKACEAddTextRange(header);
+        break;
+    }
+    Dl_info info;
+    if (dladdr((const void *)&YTKACEComputeIdiomRanges, &info) != 0) {
+        YTKACEAddTextRange((const struct mach_header *)info.dli_fbase);
+    }
+}
+
+static inline BOOL YTKACECallerIsApp(uintptr_t caller) {
+    for (NSUInteger index = 0; index < YTKACEIdiomRangeCount; index++) {
+        if (caller >= YTKACEIdiomRanges[index].start &&
+            caller < YTKACEIdiomRanges[index].end) {
+            return YES;
+        }
+    }
+    return NO;
+}
+
+NSInteger YTKACERealUserInterfaceIdiom(void) {
+    if (YTKACEIdiomForced) {
+        return (NSInteger)YTKACERealIdiom;
+    }
+    return (NSInteger)UIDevice.currentDevice.userInterfaceIdiom;
+}
+
 static UIUserInterfaceIdiom YTKACEUserInterfaceIdiom(id receiver, SEL selector) {
-    if (YTKACEFeatureEnabled(@"YTKACE.Preference.App.iPadLayout")) {
-        return UIUserInterfaceIdiomPad;
+    if (YTKACEIdiomForced &&
+        YTKACECallerIsApp((uintptr_t)__builtin_return_address(0))) {
+        return YTKACEForcedIdiom;
     }
     return OriginalDeviceIdiom != NULL
-        ? ((UIUserInterfaceIdiom (*)(id, SEL))OriginalDeviceIdiom)(receiver, selector)
-        : UIUserInterfaceIdiomPhone;
+        ? ((UIUserInterfaceIdiom (*)(id, SEL))OriginalDeviceIdiom)(receiver,
+                                                                   selector)
+        : YTKACERealIdiom;
+}
+
+static void YTKACEResolveForcedIdiom(void) {
+    UIUserInterfaceIdiom actual = UIDevice.currentDevice.userInterfaceIdiom;
+    id stored = YTKACEPreferenceObject(YTKACELayoutIdiomKey);
+    NSInteger choice = [stored respondsToSelector:@selector(integerValue)]
+        ? [stored integerValue] : 0;
+    if (choice == 0 &&
+        YTKACEFeatureEnabled(@"YTKACE.Preference.App.iPadLayout")) {
+        choice = 2;
+    }
+    UIUserInterfaceIdiom desired;
+    if (choice == 1) {
+        desired = UIUserInterfaceIdiomPhone;
+    } else if (choice == 2) {
+        desired = UIUserInterfaceIdiomPad;
+    } else {
+        return;
+    }
+    if (desired == actual) return;
+    YTKACERealIdiom = actual;
+    YTKACEForcedIdiom = desired;
+    YTKACEIdiomForced = YES;
+}
+
+static BOOL YTKACEForcedIsIPad(__unused id receiver, __unused SEL selector) {
+    return YTKACEForcedIdiom == UIUserInterfaceIdiomPad;
 }
 
 static void YTKACEAddInteraction(UIView *receiver, SEL selector, id interaction) {
@@ -606,9 +696,17 @@ void YTKACEInstallMiscellaneousHooks(void) {
         YTKACEMiscOriginals = [NSMutableDictionary dictionary];
         YTKACECaptionControllers = [NSHashTable weakObjectsHashTable];
     }
-    YTKACEInstallInstanceHook(@"UIDevice", @"userInterfaceIdiom",
-                              (IMP)YTKACEUserInterfaceIdiom,
-                              &OriginalDeviceIdiom);
+    YTKACEResolveForcedIdiom();
+    if (YTKACEIdiomForced) {
+        YTKACEComputeIdiomRanges();
+        for (NSString *name in @[@"YTCommonUtils", @"OGLMetrics"]) {
+            YTKACEInstallClassHook(name, @"isIPad",
+                                   (IMP)YTKACEForcedIsIPad, NULL);
+        }
+        YTKACEInstallInstanceHook(@"UIDevice", @"userInterfaceIdiom",
+                                  (IMP)YTKACEUserInterfaceIdiom,
+                                  &OriginalDeviceIdiom);
+    }
     YTKACEInstallInstanceHook(@"UIView", @"addInteraction:",
                               (IMP)YTKACEAddInteraction,
                               &OriginalAddInteraction);

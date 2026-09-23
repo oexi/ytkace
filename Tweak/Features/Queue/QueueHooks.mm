@@ -127,6 +127,11 @@ BOOL YTKACEQueueHasItems(void) {
     return current + 1 < YTKACEQueue().count;
 }
 
+BOOL YTKACEQueueOwnsCurrentVideo(void) {
+    if (!YTKACEFeatureEnabled(YTKACEQueueKey)) return NO;
+    return YTKACEQueueIndexOfVideo(YTKACEQueueCurrentVideoID()) != NSNotFound;
+}
+
 static NSString *YTKACEQueueVideoIDFromParams(NSData *data, int *position) {
     const unsigned char *bytes = (const unsigned char *)data.bytes;
     const NSUInteger length = data.length;
@@ -1441,6 +1446,16 @@ static void YTKACEQueueHandlePlaybackTime(NSNotification *notification) {
     if (time < total - 0.75) return;
     if (videoID.length != 0 &&
         [videoID isEqualToString:YTKACEQueueAdvancedFromVideoID]) {
+        return;
+    }
+
+    NSString *finishing = [live isKindOfClass:NSString.class] && [live length] != 0
+        ? (NSString *)live : videoID;
+    if (finishing.length == 0 ||
+        YTKACEQueueIndexOfVideo(finishing) == NSNotFound) {
+        return;
+    }
+    if (YTKACEFeatureEnabled(@"YTKACE.Preference.Playback.AutoplayDisabled")) {
         return;
     }
     YTKACEQueueAdvancedFromVideoID = videoID;

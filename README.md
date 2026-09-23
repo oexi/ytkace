@@ -111,6 +111,24 @@ From 0.9.0 onward there is nothing here from another project.
 
 iKarwan, I should have brought this to you privately instead of letting it play out in public. If something of yours is still in here, point at it and I will remove it.
 
+## Contributing
+
+Contributions are welcome — issues and pull requests both help.
+
+For bug reports, include your device, iOS version and YouTube version.
+
+For pull requests, keep each one focused on a single change and match the
+surrounding style. Two things worth knowing:
+
+- Hooks are installed by name through the helpers in `Tweak/Runtime/Hooking.h`,
+  not a hooking framework, so a missing class or selector fails quietly instead
+  of crashing on older YouTube versions.
+- New user-facing strings go through `YTKACELocalized` and belong in
+  `Resources/YTKACE.bundle/en.lproj/Localizable.strings`. Translations for the
+  other 14 languages can follow separately.
+
+Build instructions are above.
+
 ## License
 
 YTKACE source is available under the [MIT License](LICENSE). See [Third-Party Notices](THIRD_PARTY_NOTICES.md) for components and services with separate terms.

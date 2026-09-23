@@ -6,6 +6,10 @@
 #import <objc/message.h>
 #import <objc/runtime.h>
 #import <SystemConfiguration/SystemConfiguration.h>
+#import <dlfcn.h>
+#import <mach-o/dyld.h>
+#import <mach-o/loader.h>
+#import <CoreGraphics/CoreGraphics.h>
 
 static IMP OriginalLegacyQuality;
 static IMP OriginalSetUserSelectableFormats;
@@ -95,6 +99,10 @@ static NSString *YTKACETargetQualityLabel(NSArray *formats, NSString *target) {
         if ([label isEqualToString:target]) {
             return label;
         }
+        if ([label rangeOfString:@"Premium"
+                         options:NSCaseInsensitiveSearch].location != NSNotFound) {
+            continue;
+        }
         NSInteger resolution = YTKACEResolution(label);
         NSInteger distance = labs(resolution - targetResolution);
         if (resolution > 0 && distance < nearestDistance) {
@@ -136,7 +144,7 @@ static void YTKACEApplyPreferredQuality(id controller) {
     }
 }
 
-static BOOL YTKACEPlayerIsShorts(id player) {
+BOOL YTKACEPlayerIsShorts(id player) {
     SEL parentSelector = NSSelectorFromString(@"parentViewController");
     id current = player;
     for (NSUInteger depth = 0; current != nil && depth < 6; depth++) {
@@ -170,6 +178,75 @@ static void YTKACEDidLoadContentPlaybackData(id receiver,
                    dispatch_get_main_queue(), ^{
         YTKACEApplyPreferredQuality(weakReceiver);
     });
+}
+
+
+
+
+static IMP OriginalAVEligibleForHDR;
+static IMP OriginalAVAvailableHDRModes;
+
+static BOOL YTKACECallerIsYouTube(const void *address) {
+    static const void *mainBase;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        for (uint32_t index = 0; index < _dyld_image_count(); index++) {
+            const struct mach_header *header = _dyld_get_image_header(index);
+            if (header != NULL && header->filetype == MH_EXECUTE) {
+                mainBase = header;
+                break;
+            }
+        }
+    });
+    Dl_info info;
+    return address != NULL && mainBase != NULL &&
+        dladdr(address, &info) != 0 && info.dli_fbase == mainBase;
+}
+
+static BOOL YTKACEHDRSuppressed(const void *caller) {
+    return YTKACEFeatureEnabled(@"YTKACE.Preference.Playback.HDRDisabled") &&
+        YTKACECallerIsYouTube(caller);
+}
+
+static BOOL YTKACEAVEligibleForHDR(id receiver, SEL selector) {
+    if (YTKACEHDRSuppressed(__builtin_return_address(0))) return NO;
+    return OriginalAVEligibleForHDR != NULL
+        ? ((BOOL (*)(id, SEL))OriginalAVEligibleForHDR)(receiver, selector) : NO;
+}
+
+static NSInteger YTKACEAVAvailableHDRModes(id receiver, SEL selector) {
+    if (YTKACEHDRSuppressed(__builtin_return_address(0))) return 0;
+    return OriginalAVAvailableHDRModes != NULL
+        ? ((NSInteger (*)(id, SEL))OriginalAVAvailableHDRModes)(receiver, selector) : 0;
+}
+
+
+static NSArray *YTKACEFormatsWithoutPremium(NSArray *formats) {
+    if (!YTKACEFeatureEnabled(@"YTKACE.Preference.Playback.PremiumQualityHidden") ||
+        ![formats isKindOfClass:NSArray.class]) {
+        return formats;
+    }
+    NSMutableArray *kept = [NSMutableArray array];
+    for (id format in formats) {
+        id label = YTKACEValue(format, @"qualityLabel");
+        if ([label isKindOfClass:NSString.class] &&
+            [label rangeOfString:@"Premium"
+                         options:NSCaseInsensitiveSearch].location != NSNotFound) {
+            continue;
+        }
+        [kept addObject:format];
+    }
+    return kept.count != 0 ? kept : formats;
+}
+
+static IMP OriginalRedesignedSetFormats;
+
+static void YTKACERedesignedSetFormats(id receiver, SEL selector, NSArray *formats) {
+    NSArray *selected = YTKACEFormatsWithoutPremium(formats);
+    if (OriginalRedesignedSetFormats != NULL) {
+        ((void (*)(id, SEL, id))OriginalRedesignedSetFormats)(receiver, selector,
+                                                              selected);
+    }
 }
 
 static void YTKACESetUserSelectableFormats(id receiver,
@@ -210,6 +287,7 @@ static void YTKACESetUserSelectableFormats(id receiver,
             }
         }
     }
+    selectedFormats = YTKACEFormatsWithoutPremium(selectedFormats);
     if (OriginalSetUserSelectableFormats != NULL) {
         ((void (*)(id, SEL, id))OriginalSetUserSelectableFormats)(
             receiver, selector, selectedFormats);
@@ -283,13 +361,15 @@ static BOOL YTKACEAutoplayValue(id receiver, SEL selector) {
     BOOL result;
     if (disabled) {
         result = NO;
-    } else if (YTKACEQueueHasItems() && !YTKACEAutoplayIsQueueConfig(receiver)) {
+    } else if (YTKACEQueueHasItems() && YTKACEQueueOwnsCurrentVideo() &&
+               !YTKACEAutoplayIsQueueConfig(receiver)) {
         result = NO;
     } else {
         IMP original = YTKACEStreamingOriginal(receiver, selector);
         result = original != NULL
             ? ((BOOL (*)(id, SEL))original)(receiver, selector) : NO;
     }
+
     return result;
 }
 
@@ -378,6 +458,13 @@ void YTKACEInstallStreamingHooks(void) {
     if (YTKACEStreamingOriginals == nil) {
         YTKACEStreamingOriginals = [NSMutableDictionary dictionary];
     }
+    YTKACEInstallClassHook(@"AVPlayer", @"eligibleForHDRPlayback",
+                           (IMP)YTKACEAVEligibleForHDR, &OriginalAVEligibleForHDR);
+    YTKACEInstallClassHook(@"AVPlayer", @"availableHDRModes",
+                           (IMP)YTKACEAVAvailableHDRModes, &OriginalAVAvailableHDRModes);
+    YTKACEInstallInstanceHook(
+        @"YTVideoQualitySwitchRedesignedController", @"setUserSelectableFormats:",
+        (IMP)YTKACERedesignedSetFormats, &OriginalRedesignedSetFormats);
 
     Class qualityClass = NSClassFromString(@"YTIMediaQualitySettingsHotConfig");
     Method qualityMethod = qualityClass == Nil ? NULL : class_getInstanceMethod(

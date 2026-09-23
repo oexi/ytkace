@@ -20,6 +20,7 @@ static NSString * const YTKACELegacyModeKey =
     @"YTKACE.Preference.Player.DefaultRateMode";
 
 static NSString * const YTKACECustomRateKey = @"YTKACE.Preference.Player.CustomRate";
+static NSString * const YTKACEShortsRateKey = @"YTKACE.Preference.Shorts.PlaybackRate";
 
 static const double YTKACERateFollowApp = 0.0;
 static const double YTKACERateReuseLast = -1.0;
@@ -63,6 +64,16 @@ static double YTKACEConfiguredStartRate(void) {
     }
     [defaults setDouble:migrated forKey:YTKACEStartRateKey];
     return migrated;
+}
+
+static double YTKACEShortsRate(void) {
+    const double rate =
+        [NSUserDefaults.standardUserDefaults doubleForKey:YTKACEShortsRateKey];
+    return YTKACERateIsUsable(rate) ? rate : 0.0;
+}
+
+static BOOL YTKACESourceUsesShortsRate(id source) {
+    return YTKACEShortsRate() > 0.0 && source != nil && YTKACEPlayerIsShorts(source);
 }
 
 double YTKACEStartPlaybackRate(void) {
@@ -274,7 +285,8 @@ static UIImage *YTKACESpeedButtonImage(BOOL plus) {
     if ([self.primedVideo isEqualToString:identifier]) return NO;
     self.primedVideo = identifier;
 
-    const double target = YTKACEStartPlaybackRate();
+    const double target = YTKACESourceUsesShortsRate(source)
+        ? YTKACEShortsRate() : YTKACEStartPlaybackRate();
     if (!YTKACERateIsUsable(target)) return NO;
     const double playing = [self rateFromObject:source depth:0];
     if (fabs(playing - target) < 0.01) return NO;
@@ -287,7 +299,8 @@ static UIImage *YTKACESpeedButtonImage(BOOL plus) {
     NSString *key = notification.userInfo[@"key"];
     if (![key isEqualToString:YTKACEStartRateKey] &&
         ![key isEqualToString:YTKACELegacyRateKey] &&
-        ![key isEqualToString:YTKACELegacyModeKey]) {
+        ![key isEqualToString:YTKACELegacyModeKey] &&
+        ![key isEqualToString:YTKACEShortsRateKey]) {
         return;
     }
     self.primedVideo = nil;
@@ -313,8 +326,10 @@ static UIImage *YTKACESpeedButtonImage(BOOL plus) {
         return;
     }
     self.observedRate = rate;
-    [NSUserDefaults.standardUserDefaults setFloat:(float)rate
-                                           forKey:YTKACELastRateKey];
+    if (!YTKACESourceUsesShortsRate(notification.object)) {
+        [NSUserDefaults.standardUserDefaults setFloat:(float)rate
+                                               forKey:YTKACELastRateKey];
+    }
     [self.valueButton setTitle:YTKACESpeedText(rate)
                       forState:UIControlStateNormal];
 }
@@ -392,8 +407,10 @@ static UIImage *YTKACESpeedButtonImage(BOOL plus) {
     if (![self applyRate:rate toObject:self.eventsDelegate depth:0]) {
         [self applyRate:rate toObject:self.rateSource depth:0];
     }
-    [NSUserDefaults.standardUserDefaults setFloat:(float)rate
-                                           forKey:YTKACELastRateKey];
+    if (!YTKACESourceUsesShortsRate(self.rateSource)) {
+        [NSUserDefaults.standardUserDefaults setFloat:(float)rate
+                                               forKey:YTKACELastRateKey];
+    }
     self.observedRate = rate;
     [self.valueButton setTitle:YTKACESpeedText(rate)
                       forState:UIControlStateNormal];

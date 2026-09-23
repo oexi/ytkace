@@ -1,4 +1,5 @@
 #import "OverlayButtonHost.h"
+#import "../YTKACE.h"
 #import "../Runtime/Hooking.h"
 #import "../Runtime/Preferences.h"
 
@@ -468,7 +469,7 @@ void YTKACEPresentNativeSheet(NSString *title,
     SEL presentFromView = NSSelectorFromString(@"presentFromView:animated:completion:");
     SEL presentFromController =
         NSSelectorFromString(@"presentFromViewController:animated:completion:");
-    if (UIDevice.currentDevice.userInterfaceIdiom == UIUserInterfaceIdiomPad &&
+    if (YTKACERealUserInterfaceIdiom() == UIUserInterfaceIdiomPad &&
         sourceView != nil && [sheet respondsToSelector:presentFromView]) {
         ((void (*)(id, SEL, id, BOOL, id))objc_msgSend)(
             sheet, presentFromView, sourceView, YES, nil);

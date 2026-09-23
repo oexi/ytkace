@@ -270,44 +270,6 @@ NSArray *YTKACECaptionTracksForResponse(id playerResponse) {
                       NSStringFromClass(object_getClass(playerResponse)),
                       (unsigned long)([tracks isKindOfClass:NSArray.class]
                                           ? [tracks count] : 0));
-    if (![tracks isKindOfClass:NSArray.class] || [tracks count] == 0) {
-        id data = YTKACEProbe(playerResponse, @[@"playerData"]) ?: playerResponse;
-        YTKACEDownloadLog(@"subs", @"inspecting %@",
-                          NSStringFromClass(object_getClass(data)));
-        for (Class cls = object_getClass(data); cls != Nil;
-             cls = class_getSuperclass(cls)) {
-            const char *clsName = class_getName(cls);
-            if (strncmp(clsName, "NS", 2) == 0) break;
-            unsigned int count = 0;
-            objc_property_t *properties = class_copyPropertyList(cls, &count);
-            if (properties == NULL) continue;
-            NSMutableArray<NSString *> *names = [NSMutableArray array];
-            for (unsigned int index = 0; index < count; index++) {
-                [names addObject:[NSString stringWithUTF8String:
-                    property_getName(properties[index])]];
-            }
-            free(properties);
-            YTKACEDownloadLog(@"subs", @"%s props(%u): %@", clsName, count,
-                              [names componentsJoinedByString:@","]);
-            unsigned int methodCount = 0;
-            Method *methods = class_copyMethodList(cls, &methodCount);
-            if (methods != NULL) {
-                NSMutableArray<NSString *> *hits = [NSMutableArray array];
-                for (unsigned int index = 0; index < methodCount; index++) {
-                    NSString *selName = NSStringFromSelector(
-                        method_getName(methods[index]));
-                    if ([selName rangeOfString:@"aption"].location != NSNotFound) {
-                        [hits addObject:selName];
-                    }
-                }
-                free(methods);
-                if (hits.count != 0) {
-                    YTKACEDownloadLog(@"subs", @"%s caption sels: %@", clsName,
-                                      [hits componentsJoinedByString:@","]);
-                }
-            }
-        }
-    }
     return [tracks isKindOfClass:NSArray.class] ? tracks : nil;
 }
 

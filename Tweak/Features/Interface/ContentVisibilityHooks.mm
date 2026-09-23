@@ -1390,7 +1390,8 @@ static NSArray<NSString *> *YTKACEPlayableIdentifiers(void) {
     static NSArray<NSString *> *v;
     static dispatch_once_t t;
     dispatch_once(&t, ^{ v = @[@"playables_shelf", @"playableshelf",
-        @"playable_game", @"playablegame"]; });
+        @"playable_game", @"playablegame",
+        @"horizontal_gaming_shelf", @"mini_game_card"]; });
     return v;
 }
 
@@ -1602,6 +1603,7 @@ static NSData *YTKACEDescendantBytes(id section) {
     return combined;
 }
 
+
 static BOOL YTKACEBytesContain(NSData *haystack, NSArray<NSString *> *needles) {
     if (haystack.length == 0) return NO;
     for (NSString *needle in needles) {
@@ -1647,13 +1649,38 @@ static NSArray<NSString *> *YTKACECommunityBytesMarkers(void) {
     static NSArray<NSString *> *v;
     static dispatch_once_t t;
     dispatch_once(&t, ^{ v = @[
-        @"community_post", @"community_post_section",
-        @"id_ui_backstage_original_post", @"backstage_post",
-        @"id.ui.backstage.original_post", @"id.ui.backstage.post",
+        @"backstage_post",
+        @"community_post",
+        @"community_post_section",
+        @"id.ui.backstage.original_post",
+        @"id.ui.backstage.post",
         @"id.ui.backstage.post_menu_button",
-        @"post_base_wrapper.eml", @"post_base_wrapper_slim.eml",
-        @"text_post_root.eml", @"image_post_root.eml",
-        @"images_post_root.eml", @"images_post_root_slim.eml"
+        @"id_ui_backstage_original_post",
+        @"image_post_root.eml",
+        @"images_post_responsive_root",
+        @"images_post_root",
+        @"images_post_root.eml",
+        @"images_post_root_slim",
+        @"images_post_root_slim.eml",
+        @"images_post_slim",
+        @"options_post_responsive_root",
+        @"options_post_root",
+        @"poll_post_responsive_root",
+        @"poll_post_root",
+        @"post_base_wrapper",
+        @"post_base_wrapper.eml",
+        @"post_base_wrapper_slim",
+        @"post_base_wrapper_slim.eml",
+        @"post_shelf",
+        @"post_shelf_slim",
+        @"shared_post_responsive_root",
+        @"shared_post_root",
+        @"text_post_responsive_root",
+        @"text_post_root",
+        @"text_post_root.eml",
+        @"text_post_root_slim",
+        @"videos_post_responsive_root",
+        @"videos_post_root"
     ]; });
     return v;
 }
@@ -1675,7 +1702,8 @@ static NSArray<NSString *> *YTKACEPlayableBytesMarkers(void) {
         @"playable_game", @"playablegame",
         @"playables.shelf", @"playable.game",
         @".com/playables/", @"playables_shelf.eml",
-        @"playable_card.eml"
+        @"playable_card.eml",
+        @"horizontal_gaming_shelf", @"mini_game_card"
     ]; });
     return v;
 }
@@ -1686,6 +1714,10 @@ static const void *YTKACEFeedSearchedKey = &YTKACEFeedSearchedKey;
 static YTKACEFeedKind YTKACEFeedKindForSection(id section,
                                               YTKACEFeedKind wanted) {
     if (section == nil || wanted == 0) return 0;
+    if ([NSStringFromClass([section class])
+            isEqualToString:@"YTIFeedFilterChipBarRenderer"]) {
+        return 0;
+    }
     NSNumber *memo = objc_getAssociatedObject(section, YTKACEFeedKindKey);
     YTKACEFeedKind cached = memo.unsignedIntegerValue;
     YTKACEFeedKind searched = [objc_getAssociatedObject(
@@ -1738,9 +1770,23 @@ static YTKACEFeedKind YTKACEFeedKindForSection(id section,
     return structural & wanted;
 }
 
+static BOOL YTKACEIsGuidelinesSection(id section);
+
 static NSArray *YTKACEFilteredFeedSections(NSArray *sections) {
     YTKACEFeedEnsureFlagObserver();
     NSArray *adFiltered = YTKACEFilterAdSections(sections);
+    if ([adFiltered isKindOfClass:NSArray.class] && adFiltered.count != 0 &&
+        YTKACEFeatureEnabled(@"YTKACE.Preference.Overlay.CommentGuidelinesHidden")) {
+        NSIndexSet *guidelines = [adFiltered indexesOfObjectsPassingTest:
+            ^BOOL(id section, __unused NSUInteger index, __unused BOOL *stop) {
+            return YTKACEIsGuidelinesSection(section);
+        }];
+        if (guidelines.count != 0) {
+            NSMutableArray *kept = [adFiltered mutableCopy];
+            [kept removeObjectsAtIndexes:guidelines];
+            adFiltered = kept;
+        }
+    }
     if (!atomic_load(&YTKACEFeedHideAny) ||
         ![adFiltered isKindOfClass:NSArray.class]) {
         return adFiltered;
@@ -1793,6 +1839,8 @@ static BOOL YTKACEContentContains(NSString *token,
     return NO;
 }
 
+static BOOL YTKACEViewInsideReelOverlay(UIView *view);
+
 static BOOL YTKACEContentShouldHide(UIView *view, BOOL *hideSuperview) {
     NSString *identifier = [view.accessibilityIdentifier.lowercaseString
         stringByReplacingOccurrencesOfString:@"." withString:@"_"];
@@ -1821,11 +1869,20 @@ static BOOL YTKACEContentShouldHide(UIView *view, BOOL *hideSuperview) {
         [identifier isEqualToString:@"id_ui_comments_entry_point_teaser"]) {
         return YES;
     }
+    if (YTKACEFeatureEnabled(@"YTKACE.Preference.Overlay.CommentPreviewsHidden") &&
+        [identifier isEqualToString:
+            @"id_elements_components_suggested_action"] &&
+        YTKACEViewInsideReelOverlay(view)) {
+        return YES;
+    }
     if (YTKACEFeatureEnabled(@"YTKACE.Preference.Overlay.CommentGuidelinesHidden") &&
         YTKACEContentContains(token, @[
             @"id_comment_guidelines_text",
             @"id_comment_channel_guidelines_bottom_sheet_container",
-            @"id_comment_channel_guidelines_entry_banner_container"
+            @"id_comment_channel_guidelines_entry_banner_container",
+            @"channel_guidelines_entry_banner",
+            @"community_guidelines",
+            @"viewer_engagement_message"
         ])) {
         if ([identifier isEqualToString:@"id_comment_guidelines_text"] &&
             hideSuperview != NULL) {
@@ -2010,6 +2067,9 @@ static void YTKACEConsiderProductDisplayView(UIView *view, NSString *identifier)
     }
 }
 
+
+
+
 static void YTKACEDisplayViewDidMove(UIView *receiver, SEL selector) {
     if (OriginalDisplayViewDidMove != NULL) {
         ((void (*)(id, SEL))OriginalDisplayViewDidMove)(receiver, selector);
@@ -2018,6 +2078,23 @@ static void YTKACEDisplayViewDidMove(UIView *receiver, SEL selector) {
     YTKACEHandleAdDisplayView(receiver);
     YTKACEConsiderProductDisplayView(receiver, receiver.accessibilityIdentifier);
 }
+
+
+
+
+static BOOL YTKACEViewInsideReelOverlay(UIView *view) {
+    UIView *walker = view;
+    for (NSUInteger depth = 0; depth < 12 && walker != nil; depth++) {
+        if ([walker.accessibilityIdentifier isEqualToString:@"id.reel_overlay"]) {
+            return YES;
+        }
+        walker = walker.superview;
+    }
+    return NO;
+}
+
+
+
 
 static void YTKACEDisplayViewSetIdentifier(UIView *receiver,
                                            SEL selector,
@@ -2311,7 +2388,49 @@ static void YTKACEAddSections(id receiver, SEL selector, NSArray *sections) {
     }
 }
 
+static IMP OriginalSetupSectionList;
+
+static BOOL YTKACEIsGuidelinesSection(id section) {
+    NSData *pattern = [@"community_guidelines.eml" dataUsingEncoding:NSASCIIStringEncoding];
+    NSData *bytes = YTKACESectionBytes(section) ?: YTKACEDescendantBytes(section);
+    if (bytes.length == 0 ||
+        [bytes rangeOfData:pattern options:0
+                     range:NSMakeRange(0, bytes.length)].location == NSNotFound) {
+        return NO;
+    }
+    id itemSection = YTKACEFastChildSel(section, YTKACESelItemSectionRenderer) ?: section;
+    return YTKACEFastContents(itemSection).count <= 1;
+}
+
+static void YTKACEStripGuidelinesSections(id model) {
+    if (!YTKACEFeatureEnabled(@"YTKACE.Preference.Overlay.CommentGuidelinesHidden")) {
+        return;
+    }
+    NSArray *sections = YTKACEFastContents(model);
+    if (![sections isKindOfClass:NSMutableArray.class] || sections.count == 0) return;
+    NSIndexSet *drop = [sections indexesOfObjectsPassingTest:
+        ^BOOL(id section, __unused NSUInteger index, __unused BOOL *stop) {
+        return YTKACEIsGuidelinesSection(section);
+    }];
+    if (drop.count == 0) return;
+    [(NSMutableArray *)sections removeObjectsAtIndexes:drop];
+}
+
+static void YTKACESetupSectionList(id receiver, SEL selector, id model, BOOL loadingMore,
+                                   BOOL refreshing, BOOL preserveHeader) {
+    YTKACEStripGuidelinesSections(model);
+    if (OriginalSetupSectionList != NULL) {
+        ((void (*)(id, SEL, id, BOOL, BOOL, BOOL))OriginalSetupSectionList)(
+            receiver, selector, model, loadingMore, refreshing, preserveHeader);
+    }
+}
+
 void YTKACEInstallContentVisibilityHooks(void) {
+    YTKACEInstallInstanceHook(
+        @"YTAppCollectionViewController",
+        @"setupSectionListWithModel:isLoadingMore:isRefreshingFromContinuation:"
+         "shouldPreserveHeaderOnRefresh:",
+        (IMP)YTKACESetupSectionList, &OriginalSetupSectionList);
     __unused NSArray<NSNumber *> *actionHooks = @[
         @(YTKACEInstallInstanceHook(@"YTISlimVideoScrollableActionBarRenderer",
                                     @"actionButtonsArray",

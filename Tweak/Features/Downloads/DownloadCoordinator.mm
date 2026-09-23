@@ -477,7 +477,7 @@ void YTKACESaveVideoToPhotosFile(NSURL *url,
         }
         SEL presentFromView =
             NSSelectorFromString(@"presentFromView:animated:completion:");
-        if (UIDevice.currentDevice.userInterfaceIdiom == UIUserInterfaceIdiomPad &&
+        if (YTKACERealUserInterfaceIdiom() == UIUserInterfaceIdiomPad &&
             sourceView != nil && [sheet respondsToSelector:presentFromView]) {
             ((void (*)(id, SEL, id, BOOL, id))objc_msgSend)(
                 sheet, presentFromView, sourceView, YES, nil);

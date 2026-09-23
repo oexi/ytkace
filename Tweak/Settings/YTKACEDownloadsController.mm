@@ -748,7 +748,7 @@ static void YTKACEStoreMode(NSString *field, NSInteger segment, NSInteger mode) 
     SEL presentFromController = NSSelectorFromString(
         @"presentFromViewController:animated:completion:"
     );
-    if (UIDevice.currentDevice.userInterfaceIdiom == UIUserInterfaceIdiomPad &&
+    if (YTKACERealUserInterfaceIdiom() == UIUserInterfaceIdiomPad &&
         [sheet respondsToSelector:presentFromView]) {
         ((void (*)(id, SEL, id, BOOL, id))objc_msgSend)(
             sheet, presentFromView, sourceView, YES, nil
@@ -1184,7 +1184,7 @@ didSelectItemAtIndexPath:(NSIndexPath *)indexPath {
     SEL presentFromController = NSSelectorFromString(
         @"presentFromViewController:animated:completion:"
     );
-    if (UIDevice.currentDevice.userInterfaceIdiom == UIUserInterfaceIdiomPad &&
+    if (YTKACERealUserInterfaceIdiom() == UIUserInterfaceIdiomPad &&
         [sheet respondsToSelector:presentFromView]) {
         ((void (*)(id, SEL, id, BOOL, id))objc_msgSend)(
             sheet, presentFromView, sourceView, YES, nil
