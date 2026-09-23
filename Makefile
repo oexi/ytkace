@@ -49,7 +49,6 @@ YTKACE_FILES = \
 	Tweak/Features/Playback/TranscriptExport.mm \
 	Tweak/Features/Playback/SleepTimerControls.mm \
 	Tweak/Features/Playback/DoubleTapHooks.mm \
-	Tweak/Features/Playback/PlaybackWatchdog.cpp \
 	Tweak/Features/Playback/ProgressBarStyle.mm \
 	Tweak/Features/Streaming/StreamingHooks.mm \
 	Tweak/Features/Shorts/ShortsHooks.mm \

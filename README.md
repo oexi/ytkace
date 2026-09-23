@@ -99,17 +99,7 @@ YTKACE has no activation service, analytics, telemetry or updater.
 
 ## Notes
 
-A set of copying claims about this project was made in public. One of them was true.
-
-The playback fix that shipped after 0.8.0 was taken from another project. That is on me, and it has since been removed from YTKACE entirely.
-
-The rest does not hold up. The translation files were not copied, and you can check that yourself: download both projects' string files from GitHub and compare them. The SABR code here was written for this project.
-
-The code before 0.8.0 is a fair criticism. The interface looked much like iKarwan's even though it was built differently, and when people asked about it I said nothing. I should have.
-
-From 0.9.0 onward there is nothing here from another project.
-
-iKarwan, I should have brought this to you privately instead of letting it play out in public. If something of yours is still in here, point at it and I will remove it.
+The playback fix that shipped after 0.8.0 was taken from another project without credit and has been removed. The current Playback Fix is adapted from Mark02's YTPlaybackFix under the MIT license and is credited in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). If you find anything else that isn't credited, open an issue and it will be credited or removed.
 
 ## Contributing
 
