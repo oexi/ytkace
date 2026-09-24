@@ -143,13 +143,21 @@ jobs:
 
       - name: Generate release notes
         env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.metadata.outputs.tag }}
           VERSION: ${{ steps.metadata.outputs.version }}
         run: |
           git remote add upstream-release https://github.com/itzzace/ytkace.git
           git fetch --no-tags upstream-release main
-          base="$(git merge-base "$GITHUB_SHA" upstream-release/main)"
+          # Same-version rebuilds overwrite the release, so start from the newest
+          # published release with a different tag.
+          since="$(gh release list --exclude-drafts --limit 100 \
+            --json tagName,publishedAt \
+            --jq "[.[] | select(.tagName != \"$TAG\")] | sort_by(.publishedAt) | last | .tagName // \"\"")"
+          echo "Previous release: ${since:-none}"
           python3 Tools/release_notes.py \
-            --base "$base" \
+            --since "$since" \
+            --upstream upstream-release/main \
             --head "$GITHUB_SHA" \
             --version "$VERSION" \
             --repository "$GITHUB_REPOSITORY" \
