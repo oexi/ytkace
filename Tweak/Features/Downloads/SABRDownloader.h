@@ -20,6 +20,8 @@ typedef void (^YTKACENativeRequestCompletion)(
     NSError * _Nullable error);
 
 FOUNDATION_EXPORT void YTKACESABRSetPoToken(id _Nullable token);
+FOUNDATION_EXPORT void YTKACESABRSetStandaloneClient(NSString *identifier,
+    NSData * _Nullable clientInfo, NSDictionary<NSString *, NSString *> * _Nullable headers);
 FOUNDATION_EXPORT NSString *_Nullable YTKACESABRPoTokenString(void);
 FOUNDATION_EXPORT void YTKACESABRSetNativeHeaders(
     NSDictionary<NSString *, NSString *> *headers);

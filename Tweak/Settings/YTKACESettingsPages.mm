@@ -1476,6 +1476,10 @@ static NSDictionary *YTKACEPlayerControlsDefinition(void) {
         ],
         @[
             YTKACEToggle(@"Speed Buttons", YTKACESpeedKey, @"", @""),
+            YTKACEPickerDetail(@"Speed Button Style",
+                @"Speed Menu shows the current speed and opens YouTube's speed menu with speeds up to 5x.",
+                @"YTKACE.Preference.Player.SpeedButtonStyle",
+                @[@"− / +", @"Speed Menu"], @[@0, @1], 0),
             YTKACEPicker(@"Default playback speed",
                          @"YTKACE.Preference.Player.StartRate",
                          @[@"Follow YouTube", @"Match last used", @"Custom"],
@@ -1495,7 +1499,10 @@ static NSDictionary *YTKACEPlayerControlsDefinition(void) {
             YTKACEToggle(@"Remove Ads", YTKACENoAdsKey, @"", @""),
             YTKACEToggleDetail(@"Playback Fix (test)",
                 @"Retries playback automatically when the server returns an error instead of showing the error screen. Restart YouTube after changing.",
-                @"YTKACE.Preference.Playback.Fix")
+                @"YTKACE.Preference.Playback.Fix"),
+            YTKACEToggleDetail(@"Download via TV Client",
+                @"Always download as YouTube's TV app. Downloads already switch to it automatically when YouTube blocks them.",
+                @"YTKACE.Preference.Downloads.TVClient")
         ],
         progressSection,
         @[
@@ -1528,7 +1535,12 @@ static NSDictionary *YTKACEOverlayOptionsDefinition(void) {
             YTKACEToggle(@"Status Bar", @"YTKACE.Preference.Overlay.StatusBarVisible", @"", @""),
             YTKACEToggle(@"Remove Quick Actions", @"YTKACE.Preference.Overlay.QuickActionsHidden", @"", @""),
             YTKACEToggle(@"Stop Continue Watching", @"YTKACE.Preference.Overlay.ContinueWatchingDisabled", @"", @""),
-            YTKACEToggle(@"Turn Off Double Tap", @"YTKACE.Preference.Overlay.DoubleTapDisabled", @"", @"")
+            YTKACEToggle(@"Turn Off Double Tap", @"YTKACE.Preference.Overlay.DoubleTapDisabled", @"", @""),
+            YTKACEPickerDetail(@"Video Zoom",
+                @"Stop pinch zoom at fill, or zoom past YouTube's 8x limit.",
+                @"YTKACE.Preference.Playback.VideoZoom",
+                @[@"Original", @"Cap to Fill", @"Unlimited"],
+                @[@0, @1, @2], 0)
         ],
         @[
             YTKACEToggle(@"Keep Play Button Visible", @"YTKACE.Preference.Overlay.AlwaysShowPlayPause", @"", @""),
@@ -1644,7 +1656,8 @@ static NSDictionary *YTKACENavigationOptionsDefinition(void) {
         ],
         @[
             YTKACEToggle(@"Hide Status Bar", @"YTKACE.Preference.Navigation.StatusBarHidden", @"", @""),
-            YTKACEToggle(@"Remove Topic Chips", @"YTKACE.Preference.Navigation.TopicsHidden", @"", @"")
+            YTKACEToggleDetail(@"Remove Topic Chips", @"Restart YouTube after changing.",
+                               @"YTKACE.Preference.Navigation.TopicsHidden")
         ]
     ], @[YTKACELocalized(@"BRAND & CAST"), YTKACELocalized(@"TOP BUTTONS"), YTKACELocalized(@"PAGE CHROME")]);
 }
@@ -1672,6 +1685,7 @@ static NSDictionary *YTKACEShortsOptionsDefinition(void) {
             YTKACEToggleDetail(@"Pinch to Fullscreen",
                                @"Pinch out in Shorts to hide the overlay and tab bar.",
                                @"YTKACE.Preference.Shorts.PinchFullscreen"),
+            YTKACEToggle(@"Disable PiP for Shorts", @"YTKACE.Preference.Shorts.PiPDisabled", @"", @""),
             YTKACEToggle(@"Remove Pause Card", @"YTKACE.Preference.Shorts.PauseCardHidden", @"", @""),
             YTKACEToggle(@"Remove Sticker Ads", @"YTKACE.Preference.Shorts.StickerAdsHidden", @"", @"")
         ],

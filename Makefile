@@ -41,6 +41,7 @@ YTKACE_FILES = \
 	Tweak/Features/Playback/BackgroundPlaybackHooks.mm \
 	Tweak/Features/Playback/PiPControls.mm \
 	Tweak/Features/Playback/PlaybackFixHooks.mm \
+	Tweak/Features/Playback/ChallengeSolver.mm \
 	Tweak/Features/Playback/SimplifiedChineseCaptions.mm \
 	Tweak/Features/Playback/SpeedControls.mm \
 	Tweak/Features/Playback/LoopControls.mm \
@@ -49,12 +50,15 @@ YTKACE_FILES = \
 	Tweak/Features/Playback/TranscriptExport.mm \
 	Tweak/Features/Playback/SleepTimerControls.mm \
 	Tweak/Features/Playback/DoubleTapHooks.mm \
+	Tweak/Features/Playback/VideoZoom.mm \
 	Tweak/Features/Playback/ProgressBarStyle.mm \
 	Tweak/Features/Streaming/StreamingHooks.mm \
+	Tweak/Features/Streaming/TVClient.mm \
 	Tweak/Features/Shorts/ShortsHooks.mm \
 	Tweak/Features/Shorts/ShortsSessionLimit.mm \
 	Tweak/Features/Shorts/ShortsStartup.mm \
 	Tweak/Features/Shorts/ShortsPinch.mm \
+	Tweak/Features/Shorts/ShortsPiP.mm \
 	Tweak/Features/Compatibility/SideloadCompatibility.mm \
 	Tweak/Features/Compatibility/CastCompatibility.mm \
 	Tweak/Features/Onboarding/FirstLaunch.mm \
@@ -82,7 +86,7 @@ YTKACE_CFLAGS += -DYTKACE_COMBINED_SABR=1
 YTKACE_CFLAGS += -Wno-module-import-in-extern-c
 YTKACE_CFLAGS += -I$(THEOS_PROJECT_DIR)/Vendor/FFmpeg/include
 YTKACE_CCFLAGS = -std=c++17
-YTKACE_FRAMEWORKS = Foundation CoreFoundation UIKit AVFoundation AVKit AudioToolbox Photos QuartzCore MediaPlayer Security SystemConfiguration UniformTypeIdentifiers VideoToolbox CoreMedia
+YTKACE_FRAMEWORKS = Foundation CoreFoundation UIKit JavaScriptCore AVFoundation AVKit AudioToolbox Photos QuartzCore MediaPlayer Security SystemConfiguration UniformTypeIdentifiers VideoToolbox CoreMedia
 YTKACE_LIBRARIES = z
 YTKACE_LDFLAGS = -Wl,-install_name,@rpath/YTKACE.dylib
 YTKACE_LDFLAGS += $(THEOS_PROJECT_DIR)/Vendor/FFmpeg/lib/libavformat.a

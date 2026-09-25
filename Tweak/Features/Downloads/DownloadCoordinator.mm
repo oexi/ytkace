@@ -32,6 +32,7 @@
 @property(nonatomic, strong) YTKACEStreamOption *videoOption;
 @property(nonatomic, strong) YTKACEStreamOption *audioOption;
 @property(nonatomic, assign) BOOL audioOnly;
+@property(nonatomic, assign) BOOL cancelled;
 @property(nonatomic, assign) NSInteger fallbackCount;
 @property(nonatomic, assign) int64_t audioBytes;
 @property(nonatomic, assign) int64_t videoBytes;
@@ -210,6 +211,14 @@ void YTKACESaveVideoToPhotosFile(NSURL *url,
         __weak YTKACEDownloadCoordinator *weakSelf = self;
         YTKACEDownloadProgressView.sharedView.cancelHandler = ^(NSString *identifier) {
             YTKACEDownloadJob *job = weakSelf.activeJobs[identifier];
+            if (job != nil && job.sabrTask == nil && job.task == nil) {
+                job.cancelled = YES;
+                [YTKACEDownloadProgressView.sharedView finishJob:identifier
+                    success:NO message:YTKACELocalized(@"Cancelled")];
+                [weakSelf.activeJobs removeObjectForKey:identifier];
+                YTKACEDownloadLog(identifier, @"cancelled before start");
+                return;
+            }
             [job.sabrTask cancel];
             YTKACEFFmpegCancelConversion(identifier);
         };
@@ -1191,16 +1200,16 @@ void YTKACESaveVideoToPhotosFile(NSURL *url,
     job.sharesFile = self.pendingSharesFile;
     YTKACEDownloadLog(job.identifier, @"destination photos=%d share=%d",
         job.savesToPhotos, job.sharesFile);
-    self.activeJobs[job.identifier] = job;
-    [YTKACEDownloadProgressView.sharedView beginJob:job.identifier
-        title:job.title thumbnailURL:job.thumbnailURL];
-    YTKACEDownloadLog(job.identifier,
-        @"queued title=%@ author=%@ category=%@ audioOnly=%d active=%lu",
-        job.title, job.author, job.category, job.audioOnly,
-        (unsigned long)self.activeJobs.count);
-    [YTKACEDownloadProgressView.sharedView updateJob:job.identifier
-        stage:YTKACELocalized(@"Preparing download") progress:0.0 downloadedBytes:0 totalBytes:0];
     [self chooseCaptionsForJob:job then:^{
+        self.activeJobs[job.identifier] = job;
+        [YTKACEDownloadProgressView.sharedView beginJob:job.identifier
+            title:job.title thumbnailURL:job.thumbnailURL];
+        YTKACEDownloadLog(job.identifier,
+            @"queued title=%@ author=%@ category=%@ audioOnly=%d active=%lu",
+            job.title, job.author, job.category, job.audioOnly,
+            (unsigned long)self.activeJobs.count);
+        [YTKACEDownloadProgressView.sharedView updateJob:job.identifier
+            stage:YTKACELocalized(@"Preparing download") progress:0.0 downloadedBytes:0 totalBytes:0];
         [self startSABRJob:job];
     }];
 }
@@ -1352,6 +1361,7 @@ void YTKACESaveVideoToPhotosFile(NSURL *url,
 }
 
 - (void)startSABRJob:(YTKACEDownloadJob *)job {
+    if (job.cancelled) return;
     __weak YTKACEDownloadCoordinator *weakSelf = self;
     job.sabrTask = [YTKACESABRDownloader downloadPlayerResponse:job.playerResponse
         videoOption:job.videoOption audioOption:job.audioOption audioOnly:job.audioOnly

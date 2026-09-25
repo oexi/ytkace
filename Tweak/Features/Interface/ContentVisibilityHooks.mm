@@ -1639,9 +1639,9 @@ static NSArray<NSString *> *YTKACEShortsBytesMarkers(void) {
     static NSArray<NSString *> *v;
     static dispatch_once_t t;
     dispatch_once(&t, ^{ v = @[
-        @"shortsshelfeml", @"reelwatchendpoint", @"shortslockupviewmodel",
-        @"shorts_shelf", @"reel_shelf",
-        @"shorts_lockup", @"shortslockup", @"shorts_video_cell"
+        @"/oar2.jpg", @"reel_shelf", @"reelwatchendpoint",
+        @"shorts_lockup", @"shorts_shelf", @"shorts_video_cell",
+        @"shortslockup", @"shortslockupviewmodel", @"shortsshelfeml"
     ]; });
     return v;
 }
@@ -2324,11 +2324,19 @@ static void YTKACEChipCloudLayout(__unsafe_unretained id receiver, SEL selector)
 }
 
 static void YTKACEFeedHeaderScrollMode(__unsafe_unretained id receiver, SEL selector,
-                                       NSInteger mode) {
+                                       int mode) {
     if (OriginalFeedHeaderScrollMode != NULL) {
-        ((void (*)(id, SEL, NSInteger))OriginalFeedHeaderScrollMode)(
-            receiver, selector, mode);
+        ((void (*)(id, SEL, int))OriginalFeedHeaderScrollMode)(
+            receiver, selector, YTKACEHideTopics() ? 0 : mode);
     }
+}
+
+static IMP OriginalChipViewFrames;
+
+static id YTKACEChipViewFrames(__unsafe_unretained id receiver, SEL selector, double width) {
+    if (YTKACEHideTopics()) return nil;
+    return OriginalChipViewFrames == NULL ? nil
+        : ((id (*)(id, SEL, double))OriginalChipViewFrames)(receiver, selector, width);
 }
 
 static void YTKACESubsSetChipFilterView(__unsafe_unretained id receiver, SEL selector,
@@ -2517,6 +2525,10 @@ void YTKACEInstallContentVisibilityHooks(void) {
                               @"layoutSubviews",
                               (IMP)YTKACEChipCloudLayout,
                               &OriginalChipCloudLayout);
+    YTKACEInstallInstanceHook(@"YTChipCloudCell",
+                              @"framesForChipViewsWithWidth:",
+                              (IMP)YTKACEChipViewFrames,
+                              &OriginalChipViewFrames);
     YTKACEInstallInstanceHook(@"YTHeaderContentComboView",
                               @"setFeedHeaderScrollMode:",
                               (IMP)YTKACEFeedHeaderScrollMode,

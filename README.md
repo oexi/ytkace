@@ -119,6 +119,13 @@ surrounding style. Two things worth knowing:
 
 Build instructions are above.
 
+## Donate
+
+If YTKACE is useful to you, you can support it on [Ko-fi](https://ko-fi.com/itzzace) or with crypto:
+
+- **BTC:** `bc1q6ahl2mghgq34r3w26yhwevsza0vl8436gugxke`
+- **LTC:** `LYQ2ivZ52d2zAsm896MwWEkPEi15WwprS4`
+
 ## License
 
 YTKACE source is available under the [MIT License](LICENSE). See [Third-Party Notices](THIRD_PARTY_NOTICES.md) for components and services with separate terms.

@@ -50,10 +50,12 @@ void YTKACECaptionsRestore(id player);
 void YTKACEApplyPreferredCaptionLanguage(id player);
 void YTKACEInstallSleepTimerHooks(void);
 void YTKACEInstallDoubleTapHooks(void);
+void YTKACEInstallVideoZoomHooks(void);
 void YTKACEConfigureTapToSeek(UIView *view);
 void YTKACEInstallShortsLimitHooks(void);
 void YTKACEInstallShortsStartupHooks(void);
 void YTKACEInstallShortsPinchHooks(void);
+void YTKACEInstallShortsPiPHooks(void);
 void YTKACESetShortsOverlayFullscreen(UIView *overlay, BOOL fullscreen);
 BOOL YTKACEShortsLimitReached(void);
 BOOL YTKACEPlayerIsShorts(id player);
@@ -93,3 +95,11 @@ NS_ASSUME_NONNULL_END
 void YTKACEInstallPlaybackFixHooks(void);
 void YTKACEInstallSimplifiedChineseCaptionHooks(void);
 void YTKACEPrepareCaptionTrackForSelection(id _Nullable track);
+NSDictionary<NSString *, NSString *> * _Nullable YTKACESolveChallenges(NSString * _Nullable playerID,
+    NSString * _Nullable playerJS, NSString * _Nonnull type, NSArray<NSString *> * _Nonnull challenges);
+NSData * _Nonnull YTKACETVClientInfo(void);
+NSDictionary<NSString *, NSString *> * _Nonnull YTKACETVHeaders(NSString * _Nullable visitor);
+void YTKACETVFetchPlayerResponse(NSString * _Nonnull videoID,
+    void (^ _Nonnull completion)(id _Nullable response, NSString * _Nullable visitor, NSError * _Nullable error));
+NSString * _Nonnull YTKACESolveURLParameterN(NSString * _Nullable playerID, NSString * _Nullable playerJS,
+    NSString * _Nonnull URLString);

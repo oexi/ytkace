@@ -20,6 +20,14 @@ The playback error recovery in `Tweak/Features/Playback/PlaybackFixHooks.mm` is 
 
 MIT License, Copyright (c) 2026 Mark02.
 
+## yt-dlp EJS challenge solver
+
+`Resources/YTKACE.bundle/ejs/yt.solver.core.min.js` and `yt.solver.lib.min.js` are the JavaScript challenge solver from [yt-dlp/ejs](https://github.com/yt-dlp/ejs), release 0.8.0, used unmodified by `Tweak/Features/Playback/ChallengeSolver.mm` to compute the `n` parameter of TV client stream URLs from YouTube's player script. The solver is released under the Unlicense. The library bundle includes [meriyah](https://github.com/meriyah/meriyah) (ISC License, Copyright (c) 2019 and later, KFlash and others) and [astring](https://github.com/davidbonnet/astring) (MIT License, Copyright (c) 2015, David Bonnet); their licence texts are reproduced in the header of that file.
+
+## TV client identifiers
+
+`Tweak/Features/Streaming/TVClient.mm` requests streams as YouTube's TV client. The client name, version, device fields and user agent it sends, and the order of requests (a visitor ID from `/guide`, then `/player` with the player's signature timestamp), follow the values and approach published by the [Morphe](https://github.com/MorpheApp/morphe-patches) project. No Morphe code is used.
+
 ## Apple frameworks
 
 YTKACE uses UIKit, AVFoundation and SF Symbols supplied by iOS. SF Symbols artwork is requested at runtime and is not included as a redistributed asset pack.
