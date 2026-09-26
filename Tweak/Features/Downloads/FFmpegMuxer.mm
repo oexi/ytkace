@@ -1,4 +1,5 @@
 #import "FFmpegMuxer.h"
+#import <copyfile.h>
 
 #define AVMediaType YTKACEFFmpegMediaType
 extern "C" {
@@ -444,6 +445,64 @@ finish:
     return error;
 }
 
+static NSArray<NSDictionary *> *YTKACENormalizedCues(NSArray<NSDictionary *> *cues) {
+    NSCharacterSet *invisible = [NSCharacterSet characterSetWithCharactersInString:@"\u200b\u200c\u200d\ufeff"];
+    NSMutableArray<NSMutableDictionary *> *clean = [NSMutableArray array];
+    for (NSDictionary *cue in cues) {
+        NSString *text = cue[@"text"];
+        if (![text isKindOfClass:NSString.class]) continue;
+        text = [[text componentsSeparatedByCharactersInSet:invisible] componentsJoinedByString:@""];
+        NSMutableArray<NSString *> *lines = [NSMutableArray array];
+        for (NSString *line in [text componentsSeparatedByString:@"\n"]) {
+            NSString *trimmed = [line stringByTrimmingCharactersInSet:
+                NSCharacterSet.whitespaceCharacterSet];
+            if (trimmed.length != 0) [lines addObject:trimmed];
+        }
+        text = [lines componentsJoinedByString:@"\n"];
+        double start = [cue[@"start"] doubleValue];
+        double end = [cue[@"end"] doubleValue];
+        if (text.length == 0 || !isfinite(start) || !isfinite(end) || end - start < 0.05) continue;
+        [clean addObject:[@{@"text": text, @"start": @(start), @"end": @(end)} mutableCopy]];
+    }
+    [clean sortUsingComparator:^NSComparisonResult(NSDictionary *left, NSDictionary *right) {
+        return [left[@"start"] compare:right[@"start"]];
+    }];
+    NSMutableArray<NSDictionary *> *result = [NSMutableArray array];
+    for (NSMutableDictionary *cue in clean) {
+        NSMutableDictionary *previous = (NSMutableDictionary *)result.lastObject;
+        double start = [cue[@"start"] doubleValue];
+        if (previous != nil) {
+            double previousStart = [previous[@"start"] doubleValue];
+            if (start - previousStart < 0.05) {
+                if ([cue[@"text"] length] >= [previous[@"text"] length]) {
+                    previous[@"text"] = cue[@"text"];
+                }
+                previous[@"end"] = @(MAX([previous[@"end"] doubleValue], [cue[@"end"] doubleValue]));
+                continue;
+            }
+            if ([previous[@"end"] doubleValue] > start) previous[@"end"] = @(start);
+            if ([previous[@"text"] isEqualToString:cue[@"text"]]) {
+                previous[@"end"] = cue[@"end"];
+                continue;
+            }
+        }
+        [result addObject:cue];
+    }
+    return result;
+}
+
+static NSString *YTKACEMP4LanguageCode(NSString *language) {
+    NSString *base = [[language.lowercaseString componentsSeparatedByCharactersInSet:
+        [NSCharacterSet characterSetWithCharactersInString:@"-_"]] firstObject];
+    if (base.length == 3) return base;
+    static NSDictionary<NSString *, NSString *> *codes;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        codes = @{@"af": @"afr", @"am": @"amh", @"ar": @"ara", @"az": @"aze", @"be": @"bel", @"bg": @"bul", @"bn": @"ben", @"bs": @"bos", @"ca": @"cat", @"cs": @"ces", @"cy": @"cym", @"da": @"dan", @"de": @"deu", @"el": @"ell", @"en": @"eng", @"es": @"spa", @"et": @"est", @"eu": @"eus", @"fa": @"fas", @"fi": @"fin", @"fil": @"fil", @"fr": @"fra", @"ga": @"gle", @"gl": @"glg", @"gu": @"guj", @"he": @"heb", @"iw": @"heb", @"hi": @"hin", @"hr": @"hrv", @"hu": @"hun", @"hy": @"hye", @"id": @"ind", @"is": @"isl", @"it": @"ita", @"ja": @"jpn", @"jv": @"jav", @"ka": @"kat", @"kk": @"kaz", @"km": @"khm", @"kn": @"kan", @"ko": @"kor", @"ku": @"kur", @"ky": @"kir", @"lo": @"lao", @"lt": @"lit", @"lv": @"lav", @"mk": @"mkd", @"ml": @"mal", @"mn": @"mon", @"mr": @"mar", @"ms": @"msa", @"my": @"mya", @"ne": @"nep", @"nl": @"nld", @"no": @"nor", @"nb": @"nob", @"pa": @"pan", @"pl": @"pol", @"ps": @"pus", @"pt": @"por", @"ro": @"ron", @"ru": @"rus", @"si": @"sin", @"sk": @"slk", @"sl": @"slv", @"so": @"som", @"sq": @"sqi", @"sr": @"srp", @"sv": @"swe", @"sw": @"swa", @"ta": @"tam", @"te": @"tel", @"th": @"tha", @"tl": @"tgl", @"tr": @"tur", @"uk": @"ukr", @"ur": @"urd", @"uz": @"uzb", @"vi": @"vie", @"zh": @"zho", @"zu": @"zul"};
+    });
+    return base.length != 0 ? codes[base] : nil;
+}
+
 @implementation YTKACEFFmpegMuxer
 
 + (void)remuxAudioURL:(NSURL *)audioURL
@@ -659,8 +718,9 @@ static BOOL YTKACEPatchTextSampleDescription(NSURL *URL,
             text->codecpar->height = videoHeight;
             YTKACEDownloadLog(@"subs", @"tx3g desc %zu bytes box=%dx%d",
                               cursor, videoWidth, videoHeight);
-            if (language.length != 0) {
-                av_dict_set(&text->metadata, "language", language.UTF8String, 0);
+            NSString *mp4Language = YTKACEMP4LanguageCode(language);
+            if (mp4Language.length != 0) {
+                av_dict_set(&text->metadata, "language", mp4Language.UTF8String, 0);
             }
             textIndex = (int)(output->nb_streams - 1);
 
@@ -703,7 +763,7 @@ static BOOL YTKACEPatchTextSampleDescription(NSURL *URL,
                 av_packet_unref(packet);
             }
 
-            for (NSDictionary *cue in cues) {
+            for (NSDictionary *cue in YTKACENormalizedCues(cues)) {
                 NSString *value = cue[@"text"];
                 if (![value isKindOfClass:NSString.class] || value.length == 0) {
                     continue;
@@ -804,6 +864,8 @@ static BOOL YTKACEPatchTextSampleDescription(NSURL *URL,
         NSError *error = exporter.error;
         if (exporter.status == AVAssetExportSessionStatusCompleted) {
             NSFileManager *manager = NSFileManager.defaultManager;
+            copyfile(mediaURL.fileSystemRepresentation, temporary.fileSystemRepresentation,
+                     NULL, COPYFILE_XATTR);
             NSURL *backup = [mediaURL.URLByDeletingLastPathComponent
                 URLByAppendingPathComponent:[@"." stringByAppendingString:
                     NSUUID.UUID.UUIDString]];

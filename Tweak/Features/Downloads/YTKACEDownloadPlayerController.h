@@ -3,11 +3,18 @@
 NS_ASSUME_NONNULL_BEGIN
 
 FOUNDATION_EXPORT CGFloat YTKACEDownloadProgressRatio(NSURL *URL);
+FOUNDATION_EXPORT UIView *YTKACELibraryVideoView(void);
 
 @class AVPlayer;
+@class AVPlayerLayer;
 
 extern NSNotificationName const YTKACEDownloadPlaybackDidChangeNotification;
 extern NSNotificationName const YTKACEDownloadPlaybackDidStopNotification;
+extern NSNotificationName const YTKACEDownloadSponsorDidSkipNotification;
+extern NSNotificationName const YTKACEDownloadSponsorPromptNotification;
+extern NSNotificationName const YTKACELibraryPiPDidChangeNotification;
+extern NSNotificationName const YTKACELibraryFullPlayerWillShowNotification;
+extern NSNotificationName const YTKACELibraryFullPlayerWillHideNotification;
 
 @interface YTKACEDownloadPlaybackSession : NSObject
 
@@ -22,6 +29,8 @@ extern NSNotificationName const YTKACEDownloadPlaybackDidStopNotification;
 @property(nonatomic, assign) BOOL repeatEnabled;
 @property(nonatomic, assign) BOOL pauseAtEnd;
 @property(nonatomic, assign) float playbackRate;
+@property(nonatomic, copy, readonly) NSArray<NSDictionary<NSString *, id> *> *sponsorSegments;
+@property(nonatomic, copy, readonly, nullable) NSDictionary<NSString *, id> *promptedSegment;
 
 - (void)loadURL:(NSURL *)URL
        playlist:(NSArray<NSURL *> *)playlist
@@ -34,6 +43,24 @@ extern NSNotificationName const YTKACEDownloadPlaybackDidStopNotification;
 - (void)playNext;
 - (void)playPrevious;
 - (void)stop;
+- (void)skipSegment:(NSDictionary<NSString *, id> *)segment;
+- (void)seekToTime:(NSTimeInterval)seconds;
+
+@end
+
+@interface YTKACELibraryPiP : NSObject
+
++ (instancetype)sharedPiP;
+
+@property(nonatomic, assign, readonly) BOOL active;
+@property(nonatomic, assign) BOOL automatic;
+@property(nonatomic, copy, nullable) void (^restoreHandler)(UIView * _Nullable owner);
+
+- (void)useLayer:(AVPlayerLayer *)layer owner:(UIView *)owner;
+- (BOOL)isUsingLayer:(AVPlayerLayer *)layer;
+- (void)silenceOtherControllers;
+- (void)start;
+- (void)stop;
 
 @end
 
@@ -41,6 +68,7 @@ extern NSNotificationName const YTKACEDownloadPlaybackDidStopNotification;
 
 - (instancetype)initWithSession:(YTKACEDownloadPlaybackSession *)session;
 @property(nonatomic, copy, nullable) dispatch_block_t minimizeHandler;
+@property(nonatomic, assign) CGRect sourceFrame;
 
 @end
 

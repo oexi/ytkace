@@ -41,8 +41,14 @@
         return;
     }
 
-    NSArray<NSString *> *categories = YTKACESponsorEnabledCategories();
-    if (categories.count == 0) {
+    [self segmentsForVideoID:videoID categories:YTKACESponsorEnabledCategories()
+                  completion:completion];
+}
+
+- (void)segmentsForVideoID:(NSString *)videoID
+                categories:(NSArray<NSString *> *)categories
+                completion:(YTKACESponsorCompletion)completion {
+    if (videoID.length == 0 || categories.count == 0) {
         completion(@[]);
         return;
     }

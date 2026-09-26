@@ -1464,6 +1464,10 @@ static NSDictionary *YTKACEPlayerControlsDefinition(void) {
                          @[@"YTKACE Library", @"Photos", @"Ask",
                            @"Share Sheet"],
                          @[@0, @1, @2, @3], 0, @"", @""),
+            YTKACEPickerDetail(@"Download Method",
+                @"SABR is the default. Use TV Client or Direct if downloads fail.",
+                @"YTKACE.Preference.Downloads.Method",
+                @[@"SABR", @"TV Client", @"Direct"], @[@0, @2, @1], 0),
             YTKACEToggle(@"Playlist Download Button",
                          @"YTKACE.Preference.Downloads.PlaylistEnabled", @"", @""),
             YTKACEToggleDetail(@"Include Subtitles",
@@ -1498,11 +1502,8 @@ static NSDictionary *YTKACEPlayerControlsDefinition(void) {
         @[
             YTKACEToggle(@"Remove Ads", YTKACENoAdsKey, @"", @""),
             YTKACEToggleDetail(@"Playback Fix (test)",
-                @"Retries playback automatically when the server returns an error instead of showing the error screen. Restart YouTube after changing.",
-                @"YTKACE.Preference.Playback.Fix"),
-            YTKACEToggleDetail(@"Download via TV Client",
-                @"Always download as YouTube's TV app. Downloads already switch to it automatically when YouTube blocks them.",
-                @"YTKACE.Preference.Downloads.TVClient")
+                @"Reloads the video when playback fails. Restart YouTube after changing.",
+                @"YTKACE.Preference.Playback.Fix")
         ],
         progressSection,
         @[
@@ -1678,6 +1679,9 @@ static NSDictionary *YTKACEShortsOptionsDefinition(void) {
         ],
         @[
             YTKACEToggle(@"Remove Shorts Shelves", @"YTKACE.Preference.Shorts.FeedHidden", @"", @""),
+            YTKACEToggleDetail(@"Keep Shorts in Subscriptions",
+                @"Still show Shorts in the Subscriptions feed when shelves are removed.",
+                @"YTKACE.Preference.Shorts.SubscriptionsKept"),
             YTKACEPicker(@"Playback Speed", @"YTKACE.Preference.Shorts.PlaybackRate",
                          @[@"Same as videos", @"0.5x", @"0.75x", @"1x", @"1.25x",
                            @"1.5x", @"1.75x", @"2x"],

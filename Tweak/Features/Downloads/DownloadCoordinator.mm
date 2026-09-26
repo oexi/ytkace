@@ -1,9 +1,12 @@
 #import "DownloadCoordinator.h"
 #import "../../YTKACE.h"
 #import "DownloadLog.h"
+#import "DownloadSponsor.h"
 #import "DownloadProgressView.h"
 #import "FFmpegMuxer.h"
 #import "SABRDownloader.h"
+#import "DirectDownloader.h"
+#import <VideoToolbox/VideoToolbox.h>
 #import "StreamResolver.h"
 #import "../../Runtime/Preferences.h"
 #import "../../Runtime/Localization.h"
@@ -21,6 +24,8 @@
 @interface YTKACEDownloadJob : NSObject
 @property(nonatomic, strong) NSURLSessionDownloadTask *task;
 @property(nonatomic, strong) YTKACESABRTask *sabrTask;
+@property(nonatomic, strong) YTKACEDirectTask *directTask;
+@property(nonatomic, assign) BOOL useDirect;
 @property(nonatomic, copy) NSString *identifier;
 @property(nonatomic, copy) NSString *title;
 @property(nonatomic, copy) NSString *author;
@@ -95,6 +100,9 @@ void YTKACESetShortsOverlayFullscreen(UIView *overlay,
 @property(nonatomic, assign) BOOL pendingSharesFile;
 @property(nonatomic, assign) BOOL batchSharing;
 @property(nonatomic, strong) NSMutableArray<NSURL *> *batchShareURLs;
+@property(nonatomic, copy, nullable) NSArray<YTKACEStreamOption *> *directOptions;
+@property(nonatomic, copy, nullable) NSString *directOptionsVideoID;
+@property(nonatomic, assign) BOOL forceSABRNext;
 - (void)resolveSaveDestinationFromView:(nullable UIView *)sourceView
                                   then:(dispatch_block_t)continuation;
 - (void)showAudioLanguagesForVideo:(nullable YTKACEStreamOption *)videoOption
@@ -211,7 +219,7 @@ void YTKACESaveVideoToPhotosFile(NSURL *url,
         __weak YTKACEDownloadCoordinator *weakSelf = self;
         YTKACEDownloadProgressView.sharedView.cancelHandler = ^(NSString *identifier) {
             YTKACEDownloadJob *job = weakSelf.activeJobs[identifier];
-            if (job != nil && job.sabrTask == nil && job.task == nil) {
+            if (job != nil && job.sabrTask == nil && job.task == nil && job.directTask == nil) {
                 job.cancelled = YES;
                 [YTKACEDownloadProgressView.sharedView finishJob:identifier
                     success:NO message:YTKACELocalized(@"Cancelled")];
@@ -220,6 +228,7 @@ void YTKACESaveVideoToPhotosFile(NSURL *url,
                 return;
             }
             [job.sabrTask cancel];
+            [job.directTask cancel];
             YTKACEFFmpegCancelConversion(identifier);
         };
     }
@@ -1104,7 +1113,155 @@ void YTKACESaveVideoToPhotosFile(NSURL *url,
     });
 }
 
+- (BOOL)loadDirectOptionsThen:(dispatch_block_t)continuation {
+    if (!YTKACEDirectDownloadsEnabled()) {
+        self.directOptions = nil;
+        return NO;
+    }
+    NSString *videoID = [YTKACEStreamResolver videoIDFromPlayerResponse:self.playerResponse];
+    if (videoID.length != 0 && [videoID isEqualToString:self.directOptionsVideoID]) return NO;
+    self.directOptionsVideoID = videoID;
+    self.directOptions = nil;
+    __weak YTKACEDownloadCoordinator *weakSelf = self;
+    [YTKACEDirectDownloader fetchOptionsForVideoID:videoID completion:^(NSArray *options) {
+        weakSelf.directOptions = options;
+        continuation();
+    }];
+    return YES;
+}
+
+- (BOOL)isStableVolumeOption:(YTKACEStreamOption *)option {
+    if (option.xtags.length == 0) return NO;
+    NSString *padded = [option.xtags stringByReplacingOccurrencesOfString:@"-" withString:@"+"];
+    padded = [padded stringByReplacingOccurrencesOfString:@"_" withString:@"/"];
+    while (padded.length % 4 != 0) padded = [padded stringByAppendingString:@"="];
+    NSData *data = [[NSData alloc] initWithBase64EncodedString:padded options:0];
+    NSString *text = data == nil ? nil :
+        [[NSString alloc] initWithData:data encoding:NSASCIIStringEncoding];
+    return [text containsString:@"drc"];
+}
+
+- (NSString *)sizeTextForOption:(YTKACEStreamOption *)option {
+    return option.contentLength > 0
+        ? [NSByteCountFormatter stringFromByteCount:option.contentLength
+            countStyle:NSByteCountFormatterCountStyleFile] : YTKACELocalized(@"Unknown size");
+}
+
+- (void)presentDirectVideoMenuForCategory:(NSString *)category {
+    NSArray<NSString *> *codecOrder = @[@"H.264", @"VP9", @"AV1"];
+    NSMutableArray<YTKACEStreamOption *> *videos = [NSMutableArray array];
+    BOOL vp9 = VTIsHardwareDecodeSupported('vp09');
+    BOOL av1 = VTIsHardwareDecodeSupported('av01');
+    for (YTKACEStreamOption *option in self.directOptions) {
+        if (option.audioOnly || option.height <= 0) continue;
+        NSString *codec = [YTKACEDirectDownloader codecNameForOption:option];
+        if ([codec isEqualToString:@"VP9"] && !vp9) continue;
+        if ([codec isEqualToString:@"AV1"] && !av1) continue;
+        [videos addObject:option];
+    }
+    [videos sortUsingComparator:^NSComparisonResult(YTKACEStreamOption *left,
+                                                    YTKACEStreamOption *right) {
+        if (left.height != right.height) {
+            return left.height > right.height ? NSOrderedAscending : NSOrderedDescending;
+        }
+        BOOL leftHigh = [left.qualityLabel hasSuffix:@"60"];
+        BOOL rightHigh = [right.qualityLabel hasSuffix:@"60"];
+        if (leftHigh != rightHigh) return leftHigh ? NSOrderedAscending : NSOrderedDescending;
+        NSUInteger leftCodec = [codecOrder indexOfObject:[YTKACEDirectDownloader codecNameForOption:left]];
+        NSUInteger rightCodec = [codecOrder indexOfObject:[YTKACEDirectDownloader codecNameForOption:right]];
+        return leftCodec < rightCodec ? NSOrderedAscending :
+            (leftCodec > rightCodec ? NSOrderedDescending : NSOrderedSame);
+    }];
+    __weak YTKACEDownloadCoordinator *weakSelf = self;
+    NSMutableArray *actions = [NSMutableArray array];
+    for (YTKACEStreamOption *option in videos) {
+        NSString *title = [NSString stringWithFormat:@"%@ · %@ · %@",
+            option.qualityLabel.length != 0 ? option.qualityLabel
+                : [NSString stringWithFormat:@"%ldp", (long)option.height],
+            [YTKACEDirectDownloader codecNameForOption:option], [self sizeTextForOption:option]];
+        [actions addObject:[self sheetAction:title icon:@"play" secondary:nil handler:^{
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.12 * NSEC_PER_SEC)),
+                dispatch_get_main_queue(), ^{
+                    [weakSelf showAudioLanguagesForVideo:option audioOnly:NO category:category];
+                });
+        }]];
+    }
+    [self presentNativeSheetWithTitle:YTKACELocalized(@"Video Quality")
+        subtitle:[YTKACEStreamResolver titleFromPlayerResponse:self.playerResponse]
+        sourceView:self.downloadSourceView actions:actions];
+}
+
+- (void)presentDirectAudioMenuForVideo:(YTKACEStreamOption *)videoOption
+                             audioOnly:(BOOL)audioOnly
+                              category:(NSString *)category {
+    NSMutableArray<YTKACEStreamOption *> *audios = [NSMutableArray array];
+    for (YTKACEStreamOption *option in self.directOptions) {
+        if (option.audioOnly) [audios addObject:option];
+    }
+    [audios sortUsingComparator:^NSComparisonResult(YTKACEStreamOption *left,
+                                                    YTKACEStreamOption *right) {
+        if (left.isDefaultAudio != right.isDefaultAudio) {
+            return left.isDefaultAudio ? NSOrderedAscending : NSOrderedDescending;
+        }
+        NSComparisonResult language = [left.languageLabel compare:right.languageLabel];
+        if (language != NSOrderedSame) return language;
+        BOOL leftStable = [self isStableVolumeOption:left];
+        BOOL rightStable = [self isStableVolumeOption:right];
+        if (leftStable != rightStable) return leftStable ? NSOrderedDescending : NSOrderedAscending;
+        return left.bitrate > right.bitrate ? NSOrderedAscending : NSOrderedDescending;
+    }];
+    __weak YTKACEDownloadCoordinator *weakSelf = self;
+    NSMutableArray *actions = [NSMutableArray array];
+    for (YTKACEStreamOption *option in audios) {
+        NSString *stable = [self isStableVolumeOption:option]
+            ? [@" · " stringByAppendingString:YTKACELocalized(@"Stable volume")] : @"";
+        NSString *title = [NSString stringWithFormat:@"%@ · %@ %ld kbps%@ · %@",
+            option.languageLabel, [YTKACEDirectDownloader codecNameForOption:option],
+            (long)(option.bitrate / 1000), stable, [self sizeTextForOption:option]];
+        [actions addObject:[self sheetAction:title icon:@"music.note" secondary:nil handler:^{
+            [weakSelf beginSABRDownloadVideo:videoOption audio:option
+                                   audioOnly:audioOnly category:category];
+        }]];
+    }
+    NSMutableSet<NSString *> *directLanguages = [NSMutableSet set];
+    for (YTKACEStreamOption *option in audios) {
+        [directLanguages addObject:option.languageLabel.lowercaseString ?: @""];
+    }
+    for (YTKACEStreamOption *option in
+         [YTKACEStreamResolver audioOptionsFromPlayerResponse:self.playerResponse]) {
+        NSString *language = option.languageLabel.lowercaseString ?: @"";
+        BOOL covered = NO;
+        for (NSString *direct in directLanguages) {
+            if ([direct isEqualToString:language] ||
+                (direct.length != 0 && language.length != 0 &&
+                 ([direct hasPrefix:language] || [language hasPrefix:direct]))) {
+                covered = YES;
+                break;
+            }
+        }
+        if (covered) continue;
+        NSString *title = [NSString stringWithFormat:@"%@ · %@ · %@",
+            option.languageLabel, YTKACELocalized(@"via SABR"), [self sizeTextForOption:option]];
+        [actions addObject:[self sheetAction:title icon:@"music.note" secondary:nil handler:^{
+            weakSelf.forceSABRNext = YES;
+            [weakSelf beginSABRDownloadVideo:videoOption audio:option
+                                   audioOnly:audioOnly category:category];
+        }]];
+    }
+    [self presentNativeSheetWithTitle:YTKACELocalized(@"Audio Language")
+        subtitle:[YTKACEStreamResolver titleFromPlayerResponse:self.playerResponse]
+        sourceView:self.downloadSourceView actions:actions];
+}
+
 - (void)startVideoDownloadForCategory:(NSString *)category {
+    __weak YTKACEDownloadCoordinator *weakSelf = self;
+    if ([self loadDirectOptionsThen:^{ [weakSelf startVideoDownloadForCategory:category]; }]) {
+        return;
+    }
+    if (self.directOptions.count != 0) {
+        [self presentDirectVideoMenuForCategory:category];
+        return;
+    }
     NSArray<YTKACEStreamOption *> *options =
         [YTKACEStreamResolver videoOptionsFromPlayerResponse:self.playerResponse];
     YTKACEDownloadLog(@"resolver", @"video menu count=%lu category=%@",
@@ -1114,7 +1271,6 @@ void YTKACESaveVideoToPhotosFile(NSURL *url,
                          message:YTKACELocalized(@"No compatible video formats were found.")];
         return;
     }
-    __weak YTKACEDownloadCoordinator *weakSelf = self;
     NSMutableArray *actions = [NSMutableArray array];
     for (YTKACEStreamOption *option in options) {
         NSString *size = option.contentLength > 0
@@ -1137,12 +1293,18 @@ void YTKACESaveVideoToPhotosFile(NSURL *url,
 }
 
 - (void)startAudioDownload {
+    __weak YTKACEDownloadCoordinator *weakSelf = self;
+    if ([self loadDirectOptionsThen:^{ [weakSelf startAudioDownload]; }]) return;
     [self showAudioLanguagesForVideo:nil audioOnly:YES category:@"Audio"];
 }
 
 - (void)showAudioLanguagesForVideo:(YTKACEStreamOption *)videoOption
                          audioOnly:(BOOL)audioOnly
                           category:(NSString *)category {
+    if (self.directOptions.count != 0) {
+        [self presentDirectAudioMenuForVideo:videoOption audioOnly:audioOnly category:category];
+        return;
+    }
     NSArray<YTKACEStreamOption *> *options =
         [YTKACEStreamResolver audioOptionsFromPlayerResponse:self.playerResponse];
     if (options.count == 0) {
@@ -1198,6 +1360,14 @@ void YTKACESaveVideoToPhotosFile(NSURL *url,
     job.audioOnly = audioOnly;
     job.savesToPhotos = self.pendingSavesToPhotos;
     job.sharesFile = self.pendingSharesFile;
+    job.useDirect = YTKACEDirectDownloadsEnabled() && !self.forceSABRNext;
+    self.forceSABRNext = NO;
+    if (!job.useDirect && self.directOptions.count != 0 &&
+        ![self prepareSABRFallbackForJob:job]) {
+        [self showAlertWithTitle:YTKACELocalized(@"Download unavailable")
+                         message:YTKACELocalized(@"The selected formats are unavailable.")];
+        return;
+    }
     YTKACEDownloadLog(job.identifier, @"destination photos=%d share=%d",
         job.savesToPhotos, job.sharesFile);
     [self chooseCaptionsForJob:job then:^{
@@ -1210,7 +1380,11 @@ void YTKACESaveVideoToPhotosFile(NSURL *url,
             (unsigned long)self.activeJobs.count);
         [YTKACEDownloadProgressView.sharedView updateJob:job.identifier
             stage:YTKACELocalized(@"Preparing download") progress:0.0 downloadedBytes:0 totalBytes:0];
-        [self startSABRJob:job];
+        if (job.useDirect) {
+            [self startDirectJob:job];
+        } else {
+            [self startSABRJob:job];
+        }
     }];
 }
 
@@ -1360,6 +1534,153 @@ void YTKACESaveVideoToPhotosFile(NSURL *url,
     return nil;
 }
 
+- (void)reportProgressForJob:(YTKACEDownloadJob *)job
+               audioProgress:(double)audioProgress
+               videoProgress:(double)videoProgress
+                  audioBytes:(int64_t)audioBytes
+                  videoBytes:(int64_t)videoBytes
+                       phase:(NSInteger)mediaPhase {
+    job.audioBytes = audioBytes;
+    job.videoBytes = videoBytes;
+    int64_t audioTotal = MAX((int64_t)job.audioOption.contentLength, 0);
+    int64_t videoTotal = job.audioOnly ? 0 :
+        MAX((int64_t)job.videoOption.contentLength, 0);
+    int64_t downloaded = audioBytes + (job.audioOnly ? 0 : videoBytes);
+    int64_t total = audioTotal + videoTotal;
+    double transferProgress = 0.0;
+    if (total > 0) {
+        transferProgress = (double)downloaded / (double)total;
+    } else if (job.audioOnly) {
+        transferProgress = audioProgress;
+    } else {
+        transferProgress = audioProgress * 0.08 + videoProgress * 0.92;
+    }
+    transferProgress = MIN(MAX(transferProgress, 0.0), 1.0);
+    NSString *stage = job.audioOnly || mediaPhase == 1
+        ? YTKACELocalized(@"Downloading audio") : YTKACELocalized(@"Downloading video");
+    [YTKACEDownloadProgressView.sharedView updateJob:job.identifier
+        stage:stage progress:transferProgress * 0.95
+        downloadedBytes:downloaded totalBytes:total];
+}
+
+- (void)completeJob:(YTKACEDownloadJob *)job
+           videoURL:(NSURL *)videoURL
+           audioURL:(NSURL *)audioURL {
+    if (job.audioOnly) {
+        if (videoURL != nil) {
+            [NSFileManager.defaultManager removeItemAtURL:videoURL error:nil];
+        }
+        [YTKACEDownloadProgressView.sharedView updateJob:job.identifier
+            stage:YTKACELocalized(@"Finalizing") progress:0.96
+            downloadedBytes:job.audioBytes totalBytes:job.audioBytes];
+        NSURL *output = [audioURL.URLByDeletingLastPathComponent
+            URLByAppendingPathComponent:@"final.m4a"];
+        YTKACEDownloadLog(job.identifier, @"audio remux start");
+        [YTKACEFFmpegMuxer remuxAudioURL:audioURL outputURL:output
+            completion:^(NSError *remuxError) {
+                if (remuxError != nil) {
+                    [YTKACEDownloadProgressView.sharedView
+                        finishJob:job.identifier success:NO message:YTKACELocalized(@"Failed")];
+                    YTKACEDownloadLog(job.identifier,
+                        @"audio remux failed error=%@",
+                        remuxError.localizedDescription);
+                    [NSFileManager.defaultManager
+                        removeItemAtURL:audioURL.URLByDeletingLastPathComponent
+                        error:nil];
+                    [self showAlertWithTitle:YTKACELocalized(@"Download failed")
+                        message:[self failureMessageForError:remuxError
+                            job:job]];
+                    [self.activeJobs removeObjectForKey:job.identifier];
+                    return;
+                }
+                [NSFileManager.defaultManager removeItemAtURL:audioURL error:nil];
+                YTKACEDownloadLog(job.identifier, @"audio remux complete");
+                [self saveCompletedURL:output job:job extension:@"m4a"];
+            }];
+        return;
+    }
+    [YTKACEDownloadProgressView.sharedView updateJob:job.identifier
+        stage:YTKACELocalized(@"Merging") progress:0.96
+        downloadedBytes:job.audioBytes + job.videoBytes
+        totalBytes:job.audioBytes + job.videoBytes];
+    [self mergeVideoURL:videoURL audioURL:audioURL job:job];
+}
+
+- (BOOL)prepareSABRFallbackForJob:(YTKACEDownloadJob *)job {
+    NSArray<YTKACEStreamOption *> *audios =
+        [YTKACEStreamResolver audioOptionsFromPlayerResponse:job.playerResponse];
+    YTKACEStreamOption *audio = nil;
+    for (YTKACEStreamOption *option in audios) {
+        if ([option.languageLabel isEqualToString:job.audioOption.languageLabel]) {
+            audio = option;
+            break;
+        }
+    }
+    audio = audio ?: audios.firstObject;
+    if (audio == nil) return NO;
+    YTKACEStreamOption *video = nil;
+    if (!job.audioOnly) {
+        NSArray<YTKACEStreamOption *> *videos =
+            [YTKACEStreamResolver videoOptionsFromPlayerResponse:job.playerResponse];
+        for (YTKACEStreamOption *option in videos) {
+            if (option.height <= job.videoOption.height) {
+                video = option;
+                break;
+            }
+        }
+        video = video ?: videos.lastObject;
+        if (video == nil) return NO;
+    }
+    job.audioOption = audio;
+    job.videoOption = video ?: job.videoOption;
+    return YES;
+}
+
+- (void)startDirectJob:(YTKACEDownloadJob *)job {
+    if (job.cancelled) return;
+    __weak YTKACEDownloadCoordinator *weakSelf = self;
+    job.directTask = [YTKACEDirectDownloader downloadVideoID:job.videoID
+        videoOption:job.audioOnly ? nil : job.videoOption audioOption:job.audioOption
+        audioOnly:job.audioOnly identifier:job.identifier
+        progress:^(double audioProgress, double videoProgress,
+                   int64_t audioBytes, int64_t videoBytes, NSInteger mediaPhase) {
+            [weakSelf reportProgressForJob:job audioProgress:audioProgress
+                videoProgress:videoProgress audioBytes:audioBytes
+                videoBytes:videoBytes phase:mediaPhase];
+        }
+        completion:^(NSURL *videoURL, NSURL *audioURL, NSError *error) {
+            job.directTask = nil;
+            YTKACEDownloadCoordinator *strongSelf = weakSelf;
+            if (strongSelf == nil) return;
+            if (error == nil && audioURL != nil && (job.audioOnly || videoURL != nil)) {
+                [strongSelf completeJob:job videoURL:videoURL audioURL:audioURL];
+                return;
+            }
+            if ([error.domain isEqualToString:NSURLErrorDomain] &&
+                error.code == NSURLErrorCancelled) {
+                [YTKACEDownloadProgressView.sharedView finishJob:job.identifier
+                    success:NO message:YTKACELocalized(@"Cancelled")];
+                [strongSelf.activeJobs removeObjectForKey:job.identifier];
+                return;
+            }
+            YTKACEDownloadLog(job.identifier, @"direct failed error=%@ fallback=sabr",
+                error.localizedDescription ?: @"incomplete");
+            if (![strongSelf prepareSABRFallbackForJob:job]) {
+                [YTKACEDownloadProgressView.sharedView finishJob:job.identifier
+                    success:NO message:YTKACELocalized(@"Failed")];
+                [strongSelf showAlertWithTitle:YTKACELocalized(@"Download failed")
+                    message:[strongSelf failureMessageForError:error job:job]];
+                [strongSelf.activeJobs removeObjectForKey:job.identifier];
+                return;
+            }
+            job.useDirect = NO;
+            [YTKACEDownloadProgressView.sharedView updateJob:job.identifier
+                stage:YTKACELocalized(@"Preparing download") progress:0.0
+                downloadedBytes:0 totalBytes:0];
+            [strongSelf startSABRJob:job];
+        }];
+}
+
 - (void)startSABRJob:(YTKACEDownloadJob *)job {
     if (job.cancelled) return;
     __weak YTKACEDownloadCoordinator *weakSelf = self;
@@ -1369,27 +1690,9 @@ void YTKACESaveVideoToPhotosFile(NSURL *url,
         progress:^(double audioProgress, double videoProgress,
                    int64_t audioBytes, int64_t videoBytes,
                    NSInteger mediaPhase) {
-            job.audioBytes = audioBytes;
-            job.videoBytes = videoBytes;
-            int64_t audioTotal = MAX((int64_t)job.audioOption.contentLength, 0);
-            int64_t videoTotal = job.audioOnly ? 0 :
-                MAX((int64_t)job.videoOption.contentLength, 0);
-            int64_t downloaded = audioBytes + (job.audioOnly ? 0 : videoBytes);
-            int64_t total = audioTotal + videoTotal;
-            double transferProgress = 0.0;
-            if (total > 0) {
-                transferProgress = (double)downloaded / (double)total;
-            } else if (job.audioOnly) {
-                transferProgress = audioProgress;
-            } else {
-                transferProgress = audioProgress * 0.08 + videoProgress * 0.92;
-            }
-            transferProgress = MIN(MAX(transferProgress, 0.0), 1.0);
-            NSString *stage = job.audioOnly || mediaPhase == 1
-                ? YTKACELocalized(@"Downloading audio") : YTKACELocalized(@"Downloading video");
-            [YTKACEDownloadProgressView.sharedView updateJob:job.identifier
-                stage:stage progress:transferProgress * 0.95
-                downloadedBytes:downloaded totalBytes:total];
+            [weakSelf reportProgressForJob:job audioProgress:audioProgress
+                videoProgress:videoProgress audioBytes:audioBytes
+                videoBytes:videoBytes phase:mediaPhase];
         }
         completion:^(NSURL *videoURL, NSURL *audioURL, NSError *error) {
             if (error != nil || audioURL == nil || (!job.audioOnly && videoURL == nil)) {
@@ -1429,44 +1732,7 @@ void YTKACESaveVideoToPhotosFile(NSURL *url,
                 [weakSelf.activeJobs removeObjectForKey:job.identifier];
                 return;
             }
-            if (job.audioOnly) {
-                if (videoURL != nil) {
-                    [NSFileManager.defaultManager removeItemAtURL:videoURL error:nil];
-                }
-                [YTKACEDownloadProgressView.sharedView updateJob:job.identifier
-                    stage:YTKACELocalized(@"Finalizing") progress:0.96
-                    downloadedBytes:job.audioBytes totalBytes:job.audioBytes];
-                NSURL *output = [audioURL.URLByDeletingLastPathComponent
-                    URLByAppendingPathComponent:@"final.m4a"];
-                YTKACEDownloadLog(job.identifier, @"audio remux start");
-                [YTKACEFFmpegMuxer remuxAudioURL:audioURL outputURL:output
-                    completion:^(NSError *remuxError) {
-                        if (remuxError != nil) {
-                            [YTKACEDownloadProgressView.sharedView
-                                finishJob:job.identifier success:NO message:YTKACELocalized(@"Failed")];
-                            YTKACEDownloadLog(job.identifier,
-                                @"audio remux failed error=%@",
-                                remuxError.localizedDescription);
-                            [NSFileManager.defaultManager
-                                removeItemAtURL:audioURL.URLByDeletingLastPathComponent
-                                error:nil];
-                            [weakSelf showAlertWithTitle:YTKACELocalized(@"Download failed")
-                                message:[weakSelf failureMessageForError:remuxError
-                                    job:job]];
-                            [weakSelf.activeJobs removeObjectForKey:job.identifier];
-                            return;
-                        }
-                        [NSFileManager.defaultManager removeItemAtURL:audioURL error:nil];
-                        YTKACEDownloadLog(job.identifier, @"audio remux complete");
-                        [weakSelf saveCompletedURL:output job:job extension:@"m4a"];
-                    }];
-                return;
-            }
-            [YTKACEDownloadProgressView.sharedView updateJob:job.identifier
-                stage:YTKACELocalized(@"Merging") progress:0.96
-                downloadedBytes:job.audioBytes + job.videoBytes
-                totalBytes:job.audioBytes + job.videoBytes];
-            [weakSelf mergeVideoURL:videoURL audioURL:audioURL job:job];
+            [weakSelf completeJob:job videoURL:videoURL audioURL:audioURL];
         }];
 }
 
@@ -1502,6 +1768,9 @@ void YTKACESaveVideoToPhotosFile(NSURL *url,
 - (void)writeMetadataForJob:(YTKACEDownloadJob *)job
                 destination:(NSURL *)destination {
     NSURL *base = [destination URLByDeletingPathExtension];
+    NSString *videoID = job.videoID;
+    NSString *author = job.author;
+    YTKACEAttachSponsorSegments(destination, videoID, author);
     if (job.thumbnailURL == nil) return;
     NSURL *imageURL = [base URLByAppendingPathExtension:@"jpg"];
     NSString *identifier = job.identifier;
@@ -1524,12 +1793,14 @@ void YTKACESaveVideoToPhotosFile(NSURL *url,
                         YTKACEDownloadLog(identifier, @"thumbnail sidecar kept error=%@",
                             embedError.localizedDescription);
                     }
+                    YTKACEAttachSponsorSegments(destination, videoID, author);
                     [NSNotificationCenter.defaultCenter
                         postNotificationName:@"YTKACEDownloadLibraryChanged" object:nil];
                 }];
         } else {
             YTKACEDownloadLog(identifier, @"thumbnail failed error=%@",
                 error.localizedDescription ?: @"empty response");
+            YTKACEAttachSponsorSegments(destination, videoID, author);
         }
     }];
     [task resume];

@@ -1,6 +1,7 @@
 #import "YTKACEAudioPlayerController.h"
 #import "YTKACEDownloadPlayerController.h"
 #import "MediaArtwork.h"
+#import "DownloadSponsor.h"
 #import "../../Settings/YTKACESettingsPages.h"
 #import "../../Runtime/Preferences.h"
 #import "../../Runtime/Localization.h"
@@ -20,6 +21,7 @@ static NSString *YTKACEAudioTime(NSTimeInterval value) {
 @property(nonatomic, strong) UIImageView *artworkView;
 @property(nonatomic, strong) UILabel *positionLabel;
 @property(nonatomic, strong) UILabel *titleLabel;
+@property(nonatomic, strong) UILabel *channelLabel;
 @property(nonatomic, strong) UILabel *elapsedLabel;
 @property(nonatomic, strong) UILabel *durationLabel;
 @property(nonatomic, strong) UISlider *slider;
@@ -52,6 +54,7 @@ static NSString *YTKACEAudioTime(NSTimeInterval value) {
     self.artworkView.backgroundColor =
         YTKACEInterfaceSurfaceColor(self.traitCollection);
     self.titleLabel.textColor = UIColor.labelColor;
+    self.channelLabel.textColor = UIColor.secondaryLabelColor;
     self.positionLabel.textColor = UIColor.secondaryLabelColor;
     self.elapsedLabel.textColor = UIColor.secondaryLabelColor;
     self.durationLabel.textColor = UIColor.secondaryLabelColor;
@@ -79,6 +82,9 @@ static NSString *YTKACEAudioTime(NSTimeInterval value) {
     [NSNotificationCenter.defaultCenter addObserver:self
         selector:@selector(playbackChanged:)
         name:YTKACEDownloadPlaybackDidChangeNotification object:nil];
+    [NSNotificationCenter.defaultCenter addObserver:self
+        selector:@selector(playbackChanged:)
+        name:YTKACEDownloadInfoDidChangeNotification object:nil];
     __weak YTKACEAudioPlayerController *weakSelf = self;
     self.timeObserver = [self.session.player addPeriodicTimeObserverForInterval:
         CMTimeMakeWithSeconds(0.5, 600) queue:dispatch_get_main_queue()
@@ -167,6 +173,10 @@ static NSString *YTKACEAudioTime(NSTimeInterval value) {
     self.titleLabel.numberOfLines = 2;
     self.titleLabel.translatesAutoresizingMaskIntoConstraints = NO;
     [self.view addSubview:self.titleLabel];
+    self.channelLabel = [UILabel new];
+    self.channelLabel.font = [UIFont systemFontOfSize:15.0 weight:UIFontWeightRegular];
+    self.channelLabel.translatesAutoresizingMaskIntoConstraints = NO;
+    [self.view addSubview:self.channelLabel];
 
     self.slider = [UISlider new];
     self.slider.minimumTrackTintColor = UIColor.labelColor;
@@ -228,7 +238,10 @@ static NSString *YTKACEAudioTime(NSTimeInterval value) {
         [self.titleLabel.topAnchor constraintEqualToAnchor:self.artworkView.bottomAnchor constant:16.0],
         [self.titleLabel.leadingAnchor constraintEqualToAnchor:safe.leadingAnchor constant:20.0],
         [self.titleLabel.trailingAnchor constraintEqualToAnchor:safe.trailingAnchor constant:-20.0],
-        [self.slider.topAnchor constraintEqualToAnchor:self.titleLabel.bottomAnchor constant:10.0],
+        [self.channelLabel.topAnchor constraintEqualToAnchor:self.titleLabel.bottomAnchor constant:2.0],
+        [self.channelLabel.leadingAnchor constraintEqualToAnchor:self.titleLabel.leadingAnchor],
+        [self.channelLabel.trailingAnchor constraintEqualToAnchor:self.titleLabel.trailingAnchor],
+        [self.slider.topAnchor constraintEqualToAnchor:self.channelLabel.bottomAnchor constant:10.0],
         [self.slider.leadingAnchor constraintEqualToAnchor:self.titleLabel.leadingAnchor],
         [self.slider.trailingAnchor constraintEqualToAnchor:self.titleLabel.trailingAnchor],
         [self.elapsedLabel.topAnchor constraintEqualToAnchor:self.slider.bottomAnchor constant:-2.0],
@@ -428,6 +441,8 @@ static NSString *YTKACEAudioTime(NSTimeInterval value) {
 - (void)refresh {
     NSURL *URL = self.session.currentURL;
     self.titleLabel.text = URL.lastPathComponent.stringByDeletingPathExtension ?: @"Audio";
+    self.channelLabel.text = URL == nil ? nil : YTKACEStoredChannelName(URL);
+    if (self.queueOpen) self.queueHeight.constant = [self openQueueHeight];
     UIImage *artwork = URL == nil ? nil : YTKACEMediaArtworkImage(URL);
     self.artworkView.image = artwork ?: [UIImage systemImageNamed:@"music.note"];
     self.artworkView.tintColor = UIColor.systemGrayColor;
@@ -481,10 +496,17 @@ static NSString *YTKACEAudioTime(NSTimeInterval value) {
         toleranceBefore:kCMTimeZero toleranceAfter:kCMTimeZero];
 }
 
+- (CGFloat)openQueueHeight {
+    [self.view layoutIfNeeded];
+    UIView *anchor = self.channelLabel.text.length != 0 ? self.channelLabel : self.titleLabel;
+    CGFloat room = CGRectGetHeight(self.view.bounds) - CGRectGetMaxY(anchor.frame) - 16.0;
+    CGFloat height = MIN(330.0, CGRectGetHeight(self.view.bounds) * 0.43);
+    return MAX(120.0, MIN(height, room));
+}
+
 - (void)toggleQueue {
     self.queueOpen = !self.queueOpen;
-    self.queueHeight.constant = self.queueOpen
-        ? MIN(330.0, CGRectGetHeight(self.view.bounds) * 0.43) : 38.0;
+    self.queueHeight.constant = self.queueOpen ? [self openQueueHeight] : 38.0;
     [UIView animateWithDuration:0.28 delay:0.0
         usingSpringWithDamping:0.9 initialSpringVelocity:0.0 options:0
         animations:^{ [self.view layoutIfNeeded]; } completion:nil];
@@ -609,7 +631,10 @@ static NSString *YTKACEAudioTime(NSTimeInterval value) {
         ? UIColor.systemRedColor : UIColor.labelColor;
     NSTimeInterval duration = CMTimeGetSeconds([AVURLAsset URLAssetWithURL:URL
         options:nil].duration);
-    cell.detailTextLabel.text = YTKACEAudioTime(duration);
+    NSString *channel = YTKACEStoredChannelName(URL);
+    cell.detailTextLabel.text = channel.length != 0
+        ? [NSString stringWithFormat:@"%@  ·  %@", channel, YTKACEAudioTime(duration)]
+        : YTKACEAudioTime(duration);
     UIImage *artwork = YTKACEMediaArtworkImage(URL);
     cell.imageView.image = artwork ?: [UIImage systemImageNamed:@"music.note"];
     cell.imageView.tintColor = UIColor.systemGrayColor;

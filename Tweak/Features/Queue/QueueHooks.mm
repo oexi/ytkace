@@ -509,6 +509,23 @@ static NSString *YTKACEQueueTitleForVideo(NSString *videoID, NSString *stored) {
     return nil;
 }
 
+static void YTKACEQueueSafeSet(id object, id value, NSString *key) {
+    if (object == nil) return;
+    @try {
+        [object setValue:value forKey:key];
+    } @catch (__unused NSException *exception) {
+        static NSMutableSet<NSString *> *reported;
+        static dispatch_once_t onceToken;
+        dispatch_once(&onceToken, ^{ reported = [NSMutableSet set]; });
+        NSString *name = [NSString stringWithFormat:@"%@.%@", NSStringFromClass([object class]), key];
+        @synchronized (reported) {
+            if ([reported containsObject:name]) return;
+            [reported addObject:name];
+        }
+        YTKACEDownloadLog(@"queue", @"skipped unsupported field %@", name);
+    }
+}
+
 static id YTKACEQueuePanelItem(NSString *videoID, NSString *title,
                                NSString *author, NSString *length,
                                BOOL selected, NSUInteger index) {
@@ -516,14 +533,14 @@ static id YTKACEQueuePanelItem(NSString *videoID, NSString *title,
     id wrapper = YTKACEQueueMessage(
         @"YTIPlaylistPanelRenderer_PlaylistPanelVideoSupportedRenderers");
     if (renderer == nil || wrapper == nil) return nil;
-    [renderer setValue:videoID forKey:@"videoId"];
-    [renderer setValue:videoID forKey:@"playlistSetVideoId"];
+    YTKACEQueueSafeSet(renderer, videoID, @"videoId");
+    YTKACEQueueSafeSet(renderer, videoID, @"playlistSetVideoId");
     id titleText = YTKACEQueueFormatted(
         YTKACEQueueTitleForVideo(videoID, title) ?: videoID);
-    if (titleText != nil) [renderer setValue:titleText forKey:@"title"];
+    if (titleText != nil) YTKACEQueueSafeSet(renderer, titleText, @"title");
     id indexText = YTKACEQueueFormatted(
         [NSString stringWithFormat:@"%lu", (unsigned long)(index + 1)]);
-    if (indexText != nil) [renderer setValue:indexText forKey:@"indexText"];
+    if (indexText != nil) YTKACEQueueSafeSet(renderer, indexText, @"indexText");
     id thumbnails = YTKACEQueueMessage(@"YTIThumbnailDetails");
     if (thumbnails != nil) {
         NSArray<NSArray *> *sizes = @[@[@"mqdefault", @320, @180],
@@ -531,19 +548,18 @@ static id YTKACEQueuePanelItem(NSString *videoID, NSString *title,
         for (NSArray *size in sizes) {
             id thumbnail = YTKACEQueueMessage(@"YTIThumbnailDetails_Thumbnail");
             if (thumbnail == nil) continue;
-            [thumbnail setValue:[NSString stringWithFormat:
-                @"https://i.ytimg.com/vi/%@/%@.jpg", videoID, size[0]]
-                         forKey:@"URL"];
-            [thumbnail setValue:size[1] forKey:@"width"];
-            [thumbnail setValue:size[2] forKey:@"height"];
+            YTKACEQueueSafeSet(thumbnail, [NSString stringWithFormat:
+                @"https://i.ytimg.com/vi/%@/%@.jpg", videoID, size[0]], @"URL");
+            YTKACEQueueSafeSet(thumbnail, size[1], @"width");
+            YTKACEQueueSafeSet(thumbnail, size[2], @"height");
             [[thumbnails valueForKey:@"thumbnailsArray"] addObject:thumbnail];
         }
-        [renderer setValue:thumbnails forKey:@"thumbnail"];
+        YTKACEQueueSafeSet(renderer, thumbnails, @"thumbnail");
     }
     id style = YTKACEQueueMessage(@"YTIMainAppCompactRendererStyle");
     if (style != nil) {
-        [style setValue:@2 forKey:@"value"];
-        [renderer setValue:style forKey:@"mainAppStyle"];
+        YTKACEQueueSafeSet(style, @2, @"value");
+        YTKACEQueueSafeSet(renderer, style, @"mainAppStyle");
     }
     if (length.length != 0) {
         id overlay = YTKACEQueueMessage(@"YTIThumbnailOverlaySupportedRenderers");
@@ -551,19 +567,18 @@ static id YTKACEQueuePanelItem(NSString *videoID, NSString *title,
             YTKACEQueueMessage(@"YTIThumbnailOverlayTimeStatusRenderer");
         id overlayText = YTKACEQueueFormatted(length);
         if (overlay != nil && timeStatus != nil && overlayText != nil) {
-            [timeStatus setValue:overlayText forKey:@"text"];
-            [overlay setValue:timeStatus
-                       forKey:@"thumbnailOverlayTimeStatusRenderer"];
+            YTKACEQueueSafeSet(timeStatus, overlayText, @"text");
+            YTKACEQueueSafeSet(overlay, timeStatus, @"thumbnailOverlayTimeStatusRenderer");
             [[renderer valueForKey:@"thumbnailOverlaysArray"]
                 addObject:overlay];
         }
     }
     id menu = YTKACEQueueItemMenu(videoID);
-    if (menu != nil) [renderer setValue:menu forKey:@"menu"];
+    if (menu != nil) YTKACEQueueSafeSet(renderer, menu, @"menu");
     id removeCommand = YTKACEQueueSentinelCommand(@"remove", videoID);
     if (removeCommand != nil) {
-        [renderer setValue:removeCommand forKey:@"onSwipeLeftCommand"];
-        [renderer setValue:removeCommand forKey:@"onItemRemovedCommand"];
+        YTKACEQueueSafeSet(renderer, removeCommand, @"onSwipeLeftCommand");
+        YTKACEQueueSafeSet(renderer, removeCommand, @"onItemRemovedCommand");
     }
     if (!selected) {
         id swipe = YTKACEQueueMessage(
@@ -572,21 +587,21 @@ static id YTKACEQueuePanelItem(NSString *videoID, NSString *title,
         id swipeCommand = YTKACEQueueSentinelCommand(@"remove", videoID);
         if (swipe != nil && button != nil && swipeCommand != nil) {
             id label = YTKACEQueueFormatted(YTKACELocalized(@"Remove"));
-            if (label != nil) [button setValue:label forKey:@"text"];
-            [button setValue:swipeCommand forKey:@"serviceEndpoint"];
-            [swipe setValue:button forKey:@"buttonRenderer"];
+            if (label != nil) YTKACEQueueSafeSet(button, label, @"text");
+            YTKACEQueueSafeSet(button, swipeCommand, @"serviceEndpoint");
+            YTKACEQueueSafeSet(swipe, button, @"buttonRenderer");
             [[renderer valueForKey:@"swipeButtonsArray"] addObject:swipe];
         }
     }
     id byline = YTKACEQueueFormatted(author);
     if (byline != nil) {
-        [renderer setValue:byline forKey:@"shortBylineText"];
-        [renderer setValue:byline forKey:@"longBylineText"];
+        YTKACEQueueSafeSet(renderer, byline, @"shortBylineText");
+        YTKACEQueueSafeSet(renderer, byline, @"longBylineText");
     }
     id command = YTKACEQueueWatchCommand(videoID);
-    if (command != nil) [renderer setValue:command forKey:@"navigationEndpoint"];
-    [renderer setValue:@(selected) forKey:@"selected"];
-    [wrapper setValue:renderer forKey:@"playlistPanelVideoRenderer"];
+    if (command != nil) YTKACEQueueSafeSet(renderer, command, @"navigationEndpoint");
+    YTKACEQueueSafeSet(renderer, @(selected), @"selected");
+    YTKACEQueueSafeSet(wrapper, renderer, @"playlistPanelVideoRenderer");
     return wrapper;
 }
 
@@ -793,6 +808,28 @@ static id YTKACEQueueResponsePanel(id receiver, SEL selector) {
 
 
 
+static NSString *YTKACEQueuePanelField(id wrapper) {
+    static NSString *cached;
+    if (cached != nil) return cached;
+    NSString *found = nil;
+    SEL descriptorSel = NSSelectorFromString(@"descriptor");
+    id descriptor = [[wrapper class] respondsToSelector:descriptorSel]
+        ? ((id (*)(id, SEL))objc_msgSend)([wrapper class], descriptorSel) : nil;
+    NSArray *fields = [descriptor respondsToSelector:NSSelectorFromString(@"fields")]
+        ? [descriptor valueForKey:@"fields"] : nil;
+    Class panelClass = NSClassFromString(@"YTIPlaylistPanelRenderer");
+    for (id field in fields) {
+        NSString *name = [field valueForKey:@"name"];
+        if (![name isKindOfClass:NSString.class]) continue;
+        SEL msgClassSel = NSSelectorFromString(@"msgClass");
+        Class type = [field respondsToSelector:msgClassSel]
+            ? ((Class (*)(id, SEL))objc_msgSend)(field, msgClassSel) : Nil;
+        if (found == nil && panelClass != Nil && type == panelClass) found = name;
+    }
+    cached = found ?: @"playlist";
+    return cached;
+}
+
 static void YTKACEQueueInjectPanel(id response) {
     YTKACELastWatchNextResponse = response;
     if (!YTKACEFeatureEnabled(YTKACEQueueKey)) return;
@@ -802,9 +839,10 @@ static void YTKACEQueueInjectPanel(id response) {
         id single = [contents valueForKey:@"singleColumnWatchNextResults"];
         if (single == nil) return;
         id existing = [single valueForKey:@"playlist"];
-        if ([[existing valueForKey:@"hasPlaylist"] boolValue]) {
-            id current = [existing valueForKey:@"playlist"];
-            id owner = YTKACEQueueValue(current, @[@"playlistId"]);
+        NSString *field = existing != nil ? YTKACEQueuePanelField(existing) : @"playlist";
+        id current = existing != nil ? [existing valueForKey:field] : nil;
+        id owner = current != nil ? YTKACEQueueValue(current, @[@"playlistId"]) : nil;
+        if ([owner isKindOfClass:NSString.class] && [owner length] != 0) {
             if (![owner isEqual:@"YTKACEQueue"]) {
                     return;
             }
@@ -815,10 +853,10 @@ static void YTKACEQueueInjectPanel(id response) {
             @"YTISingleColumnWatchNextResultsRenderer_"
             @"SingleColumnWatchNextPlaylistSupportedRenderers");
         if (wrapper == nil) return;
-        [wrapper setValue:panel forKey:@"playlist"];
+        [wrapper setValue:panel forKey:YTKACEQueuePanelField(wrapper)];
         [single setValue:wrapper forKey:@"playlist"];
         YTKACEQueuePanelInjected = YES;
-    } @catch (NSException *exception) {
+    } @catch (__unused NSException *exception) {
     }
 }
 
@@ -1214,6 +1252,41 @@ static void YTKACEQueueSetVideoCountText(id receiver, SEL selector, id text,
         actionEnabled, loopMode, renderer, useRendererSaveIcons, headerHidden);
 }
 
+static IMP OriginalLegacySetVideoCountText;
+static IMP OriginalShouldShowPlaylist;
+
+static void YTKACEQueueLegacySetVideoCountText(id receiver, SEL selector, id text,
+                                               BOOL countHidden, BOOL shuffleEnabled,
+                                               BOOL shuffleSelected,
+                                               BOOL loopEnabled, BOOL loopSelected,
+                                               BOOL saveEnabled, BOOL shareEnabled,
+                                               BOOL saveSelected, BOOL actionEnabled,
+                                               long long loopMode, id renderer,
+                                               BOOL useRendererSaveIcons) {
+    if (OriginalLegacySetVideoCountText == NULL) return;
+    if (YTKACEQueueIsActive()) {
+        shuffleEnabled = YES;
+        loopEnabled = YES;
+        actionEnabled = YES;
+        loopMode = YTKACEQueueSavedLoopMode();
+        loopSelected = loopMode != 0;
+    }
+    ((void (*)(id, SEL, id, BOOL, BOOL, BOOL, BOOL, BOOL, BOOL, BOOL, BOOL,
+               BOOL, long long, id, BOOL))OriginalLegacySetVideoCountText)(
+        receiver, selector, text, countHidden, shuffleEnabled, shuffleSelected,
+        loopEnabled, loopSelected, saveEnabled, shareEnabled, saveSelected,
+        actionEnabled, loopMode, renderer, useRendererSaveIcons);
+}
+
+static BOOL YTKACEQueueShouldShowPlaylist(id receiver, SEL selector) {
+    if (YTKACEQueuePanelController != receiver) {
+        YTKACEQueuePanelController = receiver;
+    }
+    if (YTKACEQueueIsActive()) return YES;
+    if (OriginalShouldShowPlaylist == NULL) return NO;
+    return ((BOOL (*)(id, SEL))OriginalShouldShowPlaylist)(receiver, selector);
+}
+
 static void YTKACEQueueDidTapShuffle(id receiver, SEL selector) {
     if (!YTKACEQueueIsActive()) {
         if (OriginalDidTapShuffle == NULL) return;
@@ -1594,8 +1667,83 @@ static NSString *YTKACEQueueClip(id object, NSUInteger limit) {
 
 
 
+static BOOL YTKACEQueueHandleMenuAdd(id command, id view) {
+    if (!YTKACEFeatureEnabled(YTKACEQueueKey)) return NO;
+    NSString *dump = nil;
+    @try {
+        dump = [command description];
+    } @catch (__unused NSException *exception) {
+        return NO;
+    }
+    if (![dump containsString:@"getWatchNextQueueAddCommand"]) return NO;
+    static NSRegularExpression *expression;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        expression = [NSRegularExpression regularExpressionWithPattern:
+            @"getWatchNextQueueAddCommand\\]\\s*params:\\s*\"([^\"]+)\""
+                                                               options:0 error:NULL];
+    });
+    NSTextCheckingResult *match = [expression firstMatchInString:dump options:0
+        range:NSMakeRange(0, dump.length)];
+    if (match == nil) return NO;
+    NSString *params = [dump substringWithRange:[match rangeAtIndex:1]];
+    NSString *decoded = [params stringByRemovingPercentEncoding] ?: params;
+    NSData *data = [[NSData alloc] initWithBase64EncodedString:decoded
+        options:NSDataBase64DecodingIgnoreUnknownCharacters];
+    NSString *videoID = data.length ? YTKACEQueueVideoIDFromParams(data, NULL) : nil;
+    if (videoID.length == 0) return NO;
+    BOOL playNext = YES;
+    const unsigned char *bytes = (const unsigned char *)data.bytes;
+    for (NSUInteger index = 0; index + 1 < data.length; index++) {
+        if (bytes[index] == 0x18 && (bytes[index + 1] == 0x01 || bytes[index + 1] == 0x02)) {
+            playNext = bytes[index + 1] == 0x01;
+            break;
+        }
+    }
+    YTKACEQueueAdd(videoID, YTKACEQueueTitleNearView(view), playNext);
+    return YES;
+}
+
+static id YTKACEQueueConditionalItem(id wrapper) {
+    SEL getter = NSSelectorFromString(@"menuConditionalServiceItemRenderer");
+    SEL has = NSSelectorFromString(@"hasMenuConditionalServiceItemRenderer");
+    if (![wrapper respondsToSelector:getter] || ![wrapper respondsToSelector:has]) return nil;
+    if (!((BOOL (*)(id, SEL))objc_msgSend)(wrapper, has)) return nil;
+    return ((id (*)(id, SEL))objc_msgSend)(wrapper, getter);
+}
+
+void YTKACEQueuePrepareMenuRenderers(id renderers) {
+    if (!YTKACEFeatureEnabled(YTKACEQueueKey) || ![renderers isKindOfClass:NSArray.class]) return;
+    NSMutableDictionary<NSString *, id> *commands = [NSMutableDictionary dictionary];
+    NSMutableArray *upsells = [NSMutableArray array];
+    for (id wrapper in renderers) {
+        id item = YTKACEQueueConditionalItem(wrapper);
+        if (item == nil) continue;
+        NSString *dump = [item description];
+        NSString *icon = [dump containsString:@"QUEUE_PLAY_NEXT"] ? @"next"
+            : ([dump containsString:@"ADD_TO_REMOTE_QUEUE"] ? @"last" : nil);
+        if (icon == nil) continue;
+        if ([dump containsString:@"getWatchNextQueueAddCommand"]) {
+            if (commands[icon] == nil) commands[icon] = [item valueForKey:@"serviceEndpoint"];
+        } else if ([dump containsString:@"SPunlimited"]) {
+            [upsells addObject:@[item, icon]];
+        }
+    }
+    for (NSArray *pair in upsells) {
+        id command = commands[pair[1]];
+        if (command == nil) continue;
+        id item = pair[0];
+        [item setValue:command forKey:@"serviceEndpoint"];
+        SEL clearIcon = NSSelectorFromString(@"setSecondaryIcon:");
+        if ([item respondsToSelector:clearIcon]) {
+            ((void (*)(id, SEL, id))objc_msgSend)(item, clearIcon, nil);
+        }
+    }
+}
+
 static BOOL YTKACEQueueRouterHandle(id receiver, SEL selector, id command,
                                     id entry, id view, id sender) {
+    if (YTKACEQueueHandleMenuAdd(command, view)) return YES;
     if (YTKACEQueueHandleSentinel(command)) return YES;
     if (YTKACEQueueHandleDiscovery(command, view)) return YES;
     if (OriginalRouterHandle == NULL) return NO;
@@ -1606,6 +1754,7 @@ static BOOL YTKACEQueueRouterHandle(id receiver, SEL selector, id command,
 static BOOL YTKACEQueueRouterHandleCompletion(id receiver, SEL selector,
                                               id command, id entry, id view,
                                               id sender, id block) {
+    if (YTKACEQueueHandleMenuAdd(command, view)) return YES;
     if (YTKACEQueueHandleSentinel(command)) return YES;
     if (YTKACEQueueHandleDiscovery(command, view)) return YES;
     if (OriginalRouterHandleCompletion == NULL) return NO;
@@ -1615,6 +1764,7 @@ static BOOL YTKACEQueueRouterHandleCompletion(id receiver, SEL selector,
 
 static BOOL YTKACEQueueScopedRouterHandle(id receiver, SEL selector, id command,
                                           id entry, id view, id sender) {
+    if (YTKACEQueueHandleMenuAdd(command, view)) return YES;
     if (YTKACEQueueHandleSentinel(command)) return YES;
     if (YTKACEQueueHandleDiscovery(command, view)) return YES;
     if (OriginalScopedRouterHandle == NULL) return NO;
@@ -1626,6 +1776,7 @@ static BOOL YTKACEQueueScopedRouterHandleCompletion(id receiver, SEL selector,
                                                     id command, id entry,
                                                     id view, id sender,
                                                     id block) {
+    if (YTKACEQueueHandleMenuAdd(command, view)) return YES;
     if (YTKACEQueueHandleSentinel(command)) return YES;
     if (YTKACEQueueHandleDiscovery(command, view)) return YES;
     if (OriginalScopedRouterHandleCompletion == NULL) return NO;
@@ -1634,7 +1785,30 @@ static BOOL YTKACEQueueScopedRouterHandleCompletion(id receiver, SEL selector,
         receiver, selector, command, entry, view, sender, block);
 }
 
+static IMP OriginalLegacyQueueMenuAdd;
+static IMP OriginalLegacyWatchNextQueueAdd;
+
+static void YTKACELegacyQueueMenuAdd(id receiver, SEL selector, id command,
+                                     id entry, id view, id sender) {
+    if (YTKACEQueueHandleMenuAdd(command, view)) return;
+    ((void (*)(id, SEL, id, id, id, id))OriginalLegacyQueueMenuAdd)(
+        receiver, selector, command, entry, view, sender);
+}
+
+static void YTKACELegacyWatchNextQueueAdd(id receiver, SEL selector, id command,
+                                          id entry, id view, id sender) {
+    if (YTKACEQueueHandleMenuAdd(command, view)) return;
+    ((void (*)(id, SEL, id, id, id, id))OriginalLegacyWatchNextQueueAdd)(
+        receiver, selector, command, entry, view, sender);
+}
+
 void YTKACEInstallQueueHooks(void) {
+    YTKACEInstallInstanceHook(@"YTQueueAddMenuItemCommandHandler",
+        @"executeWithCommand:entry:fromView:sender:",
+        (IMP)YTKACELegacyQueueMenuAdd, &OriginalLegacyQueueMenuAdd);
+    YTKACEInstallInstanceHook(@"YTGetWatchNextQueueAddCommandHandler",
+        @"executeWithCommand:entry:fromView:sender:",
+        (IMP)YTKACELegacyWatchNextQueueAdd, &OriginalLegacyWatchNextQueueAdd);
     YTKACEInstallInstanceHook(
         @"MDXRequestDeviceDiscoveryCommandHandlerImpl",
         @"executeWithCommand:entry:fromView:sender:",
@@ -1643,12 +1817,18 @@ void YTKACEInstallQueueHooks(void) {
         @"YTDefaultQueueWatchNextResponseParser",
         @"playlistPanelRendererFromWatchNextResponse:",
         (IMP)YTKACEQueuePanelParse, &OriginalPanelParse);
-    YTKACEInstallInstanceHook(@"YTPlaylistPanelSectionController",
+    if (!YTKACEInstallInstanceHook(@"YTPlaylistPanelSectionController",
         @"setVideoCountText:videoCountHidden:shuffleEnabled:shuffleSelected:"
         @"loopEnabled:loopSelected:saveEnabled:shareEnabled:saveSelected:"
         @"actionEnabled:loopMode:playlistPanelRenderer:useRendererSaveIcons:"
         @"headerHidden:",
-        (IMP)YTKACEQueueSetVideoCountText, &OriginalSetVideoCountText);
+        (IMP)YTKACEQueueSetVideoCountText, &OriginalSetVideoCountText)) {
+        YTKACEInstallInstanceHook(@"YTPlaylistPanelSectionController",
+            @"setVideoCountText:videoCountHidden:shuffleEnabled:shuffleSelected:"
+            @"loopEnabled:loopSelected:saveEnabled:shareEnabled:saveSelected:"
+            @"actionEnabled:loopMode:playlistPanelRenderer:useRendererSaveIcons:",
+            (IMP)YTKACEQueueLegacySetVideoCountText, &OriginalLegacySetVideoCountText);
+    }
     YTKACEInstallInstanceHook(@"YTPlaylistPanelController",
         @"didTapShuffleButton", (IMP)YTKACEQueueDidTapShuffle,
         &OriginalDidTapShuffle);
@@ -1705,9 +1885,13 @@ void YTKACEInstallQueueHooks(void) {
         (IMP)YTKACEQueuePanelByline, &OriginalPanelByline);
     YTKACEInstallInstanceHook(@"YTPlaylistPanelController", @"isQueue",
         (IMP)YTKACEQueueIsQueue, &OriginalIsQueue);
-    YTKACEInstallInstanceHook(@"YTPlaylistPanelController",
+    if (!YTKACEInstallInstanceHook(@"YTPlaylistPanelController",
         @"hasQueueContents", (IMP)YTKACEQueueHasContents,
-        &OriginalHasQueueContents);
+        &OriginalHasQueueContents)) {
+        YTKACEInstallInstanceHook(@"YTPlaylistPanelController",
+            @"shouldShowPlaylist", (IMP)YTKACEQueueShouldShowPlaylist,
+            &OriginalShouldShowPlaylist);
+    }
     YTKACEInstallInstanceHook(@"YTQueueController",
         @"moveItemAtIndexPath:toIndexPath:userTriggered:",
         (IMP)YTKACEQueueMoveItem, &OriginalMoveItem);

@@ -929,6 +929,7 @@ static void YTKACEShowMenuSkipCompletion(id receiver, SEL selector, id renderer,
 static id YTKACEActionsForRenderersLog(id receiver, SEL selector, id renderers,
                                        id view, id entry, BOOL log,
                                        id responder) {
+    YTKACEQueuePrepareMenuRenderers(renderers);
     YTKACECaptureMenuSource(view);
     if (OriginalActionsForRenderersLog == NULL) return nil;
     return ((id (*)(id, SEL, id, id, id, BOOL, id))OriginalActionsForRenderersLog)(
@@ -1054,6 +1055,16 @@ static void YTKACEOfflineVideoExecute(id receiver, SEL selector, id command,
         receiver, selector, command, entry, view, sender);
 }
 
+static IMP OriginalLegacyOfflineVideoExecute;
+
+static void YTKACELegacyOfflineVideoExecute(id receiver, SEL selector, id command,
+                                            id entry, id view, id sender) {
+    if (YTKACEHandleFeedDownload(command, view, sender)) return;
+    if (OriginalLegacyOfflineVideoExecute == NULL) return;
+    ((void (*)(id, SEL, id, id, id, id))OriginalLegacyOfflineVideoExecute)(
+        receiver, selector, command, entry, view, sender);
+}
+
 static void YTKACEOfflineVideoExecuteCompletion(id receiver, SEL selector,
                                                 id command, id entry, id view,
                                                 id sender, id block) {
@@ -1080,7 +1091,13 @@ void YTKACEInstallFeedDownloadHooks(void) {
         @"executeWithCommand:entry:fromView:sender:completionBlock:",
         (IMP)YTKACEOfflineVideoExecuteCompletion,
         &OriginalOfflineVideoExecuteCompletion);
-    YTKACEDownloadLog(@"feed", @"hooks execute=%d completion=%d", a, b);
+    BOOL legacy = NO;
+    if (!a) {
+        legacy = YTKACEInstallInstanceHook(@"YTOfflineVideoEndpointCommandHandler",
+            @"executeWithCommand:entry:fromView:sender:",
+            (IMP)YTKACELegacyOfflineVideoExecute, &OriginalLegacyOfflineVideoExecute);
+    }
+    YTKACEDownloadLog(@"feed", @"hooks execute=%d completion=%d legacy=%d", a, b, legacy);
 }
 
 BOOL YTKACEPlaybackTemplateReady(void) {

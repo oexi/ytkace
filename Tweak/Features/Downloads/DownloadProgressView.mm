@@ -98,11 +98,11 @@
     [self.card addSubview:self.titleLabel];
 
     self.statusLabel = [UILabel new];
-    self.statusLabel.font = [UIFont systemFontOfSize:11.0 weight:UIFontWeightRegular];
+    self.statusLabel.font = [UIFont monospacedDigitSystemFontOfSize:11.0 weight:UIFontWeightRegular];
     [self.card addSubview:self.statusLabel];
 
     self.percentLabel = [UILabel new];
-    self.percentLabel.font = [UIFont systemFontOfSize:15.0 weight:UIFontWeightBold];
+    self.percentLabel.font = [UIFont monospacedDigitSystemFontOfSize:15.0 weight:UIFontWeightBold];
     self.percentLabel.textAlignment = NSTextAlignmentRight;
     [self.card addSubview:self.percentLabel];
 
@@ -208,7 +208,18 @@
         ? MIN(MAX(item.progress, 0.0), 1.0) : 0.0;
     self.percentLabel.text = [NSString stringWithFormat:@"%.0f%%", progress * 100.0];
     BOOL sameItem = [self.renderedIdentifier isEqualToString:item.identifier];
-    [self.progressView setProgress:(float)progress animated:sameItem];
+    if (sameItem && progress > self.progressView.progress) {
+        [UIView animateWithDuration:0.35 delay:0.0
+                            options:UIViewAnimationOptionCurveLinear |
+                                    UIViewAnimationOptionBeginFromCurrentState |
+                                    UIViewAnimationOptionAllowUserInteraction
+                         animations:^{
+            [self.progressView setProgress:(float)progress animated:NO];
+            [self.progressView layoutIfNeeded];
+        } completion:nil];
+    } else {
+        [self.progressView setProgress:(float)progress animated:NO];
+    }
     self.renderedIdentifier = [item.identifier copy];
     self.thumbnailView.image = item.thumbnail;
     self.cancelButton.hidden = [item.stage isEqualToString:YTKACELocalized(@"Merging")] ||

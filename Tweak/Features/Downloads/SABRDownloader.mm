@@ -1,6 +1,7 @@
 #import "SABRDownloader.h"
 #import "DownloadLog.h"
 #import "StreamResolver.h"
+#import "DirectDownloader.h"
 #import "../../Runtime/Preferences.h"
 #import "../../YTKACE.h"
 
@@ -918,7 +919,7 @@ NSUInteger YTKACEPurgeDownloadScratch(BOOL includeActive) {
 
 - (void)start {
     if (self.finished) return;
-    if (!self.triedTVClient && YTKACEFeatureEnabled(@"YTKACE.Preference.Downloads.TVClient")) {
+    if (!self.triedTVClient && YTKACETVDownloadsEnabled()) {
         __weak YTKACESABRSession *weakSelf = self;
         [self switchToTVClient:@"preference" then:^(__unused BOOL switched) {
             [weakSelf start];

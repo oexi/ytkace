@@ -1078,6 +1078,7 @@ static BOOL YTKACEChildClassContains(id section, NSArray<NSString *> *needles) {
 static const NSUInteger YTKACEFeedChildScanLimit = 64;
 
 static _Atomic BOOL YTKACEFeedHideShorts = NO;
+static _Atomic BOOL YTKACEFeedKeepSubsShorts = NO;
 static _Atomic BOOL YTKACEFeedHideProducts = NO;
 static _Atomic BOOL YTKACEFeedHideCommunity = NO;
 static _Atomic BOOL YTKACEFeedHideMixes = NO;
@@ -1116,6 +1117,8 @@ static void YTKACEFeedRefreshFlags(void) {
         YTKACEFeatureEnabled(@"YTKACE.Preference.Shorts.PauseCardHidden") ||
         YTKACEFeatureEnabled(@"YTKACE.Preference.Shorts.StickerAdsHidden"));
     atomic_store(&YTKACEFeedHideShorts, hideShorts);
+    atomic_store(&YTKACEFeedKeepSubsShorts,
+        YTKACEFeatureEnabled(@"YTKACE.Preference.Shorts.SubscriptionsKept"));
     atomic_store(&YTKACEFeedHideProducts, hideProducts);
     atomic_store(&YTKACEFeedHideCommunity, hideCommunity);
     atomic_store(&YTKACEFeedHideMixes, hideMixes);
@@ -1772,7 +1775,21 @@ static YTKACEFeedKind YTKACEFeedKindForSection(id section,
 
 static BOOL YTKACEIsGuidelinesSection(id section);
 
-static NSArray *YTKACEFilteredFeedSections(NSArray *sections) {
+static BOOL YTKACEKeepsShortsInFeed(id receiver) {
+    static SEL browseSel;
+    if (browseSel == NULL) browseSel = NSSelectorFromString(@"browseID");
+    if (![receiver respondsToSelector:browseSel]) return NO;
+    id browseID = ((id (*)(id, SEL))objc_msgSend)(receiver, browseSel);
+    if (![browseID isKindOfClass:NSString.class]) return NO;
+    if ([browseID isEqualToString:@"FEsubscriptions"]) {
+        return atomic_load(&YTKACEFeedKeepSubsShorts);
+    }
+    static NSSet<NSString *> *personal;
+    if (personal == nil) personal = [NSSet setWithArray:@[@"FEhistory", @"FElibrary", @"FEplaylist_aggregation"]];
+    return [personal containsObject:browseID];
+}
+
+static NSArray *YTKACEFilteredFeedSections(id receiver, NSArray *sections) {
     YTKACEFeedEnsureFlagObserver();
     NSArray *adFiltered = YTKACEFilterAdSections(sections);
     if ([adFiltered isKindOfClass:NSArray.class] && adFiltered.count != 0 &&
@@ -1791,7 +1808,7 @@ static NSArray *YTKACEFilteredFeedSections(NSArray *sections) {
         ![adFiltered isKindOfClass:NSArray.class]) {
         return adFiltered;
     }
-    BOOL hideShorts = atomic_load(&YTKACEFeedHideShorts);
+    BOOL hideShorts = atomic_load(&YTKACEFeedHideShorts) && !YTKACEKeepsShortsInFeed(receiver);
     BOOL hideProducts = atomic_load(&YTKACEFeedHideProducts);
     BOOL hideCommunity = atomic_load(&YTKACEFeedHideCommunity);
     BOOL hideMixes = atomic_load(&YTKACEFeedHideMixes);
@@ -1824,7 +1841,7 @@ static id YTKACESectionControllers(id receiver, SEL selector,
                                    NSArray *sections, id reloadMap) {
     if (OriginalSectionControllers == NULL) return nil;
     YTKACEEnsureStructuralActionHook();
-    NSArray *filtered = YTKACEFilteredFeedSections(sections);
+    NSArray *filtered = YTKACEFilteredFeedSections(receiver, sections);
     return ((id (*)(id, SEL, id, id))OriginalSectionControllers)(
         receiver, selector, filtered, reloadMap);
 }
@@ -2390,7 +2407,7 @@ static BOOL YTKACEShouldHideSubheader(id receiver, SEL selector) {
 static void YTKACEAddSections(id receiver, SEL selector, NSArray *sections) {
     if (OriginalAddSections != NULL) {
         YTKACEEnsureStructuralActionHook();
-        NSArray *filtered = YTKACEFilteredFeedSections(sections);
+        NSArray *filtered = YTKACEFilteredFeedSections(receiver, sections);
         ((void (*)(id, SEL, id))OriginalAddSections)(
             receiver, selector, filtered);
     }

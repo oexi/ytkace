@@ -5,6 +5,7 @@
 static IMP OriginalPlayableInBackground;
 static IMP OriginalMLPlayableInBackground;
 static IMP OriginalBackgroundEnabled;
+static IMP OriginalPlayableInPiP;
 
 static BOOL YTKACEBackgroundBoolean(id receiver, SEL selector) {
     if (YTKACEFeatureEnabled(YTKACEBackgroundPlaybackKey)) {
@@ -24,7 +25,17 @@ static BOOL YTKACEBackgroundBoolean(id receiver, SEL selector) {
         : ((BOOL (*)(id, SEL))original)(receiver, selector);
 }
 
+static BOOL YTKACEPlayableInPiP(id receiver, SEL selector) {
+    if (YTKACEFeatureEnabled(YTKACEBackgroundPlaybackKey)) return YES;
+    return OriginalPlayableInPiP != NULL &&
+        ((BOOL (*)(id, SEL))OriginalPlayableInPiP)(receiver, selector);
+}
+
 void YTKACEInstallBackgroundPlaybackHooks(void) {
+    YTKACEInstallInstanceHook(@"YTIPlayabilityStatus",
+                              @"isPlayableInPictureInPicture",
+                              (IMP)YTKACEPlayableInPiP,
+                              &OriginalPlayableInPiP);
     YTKACEInstallInstanceHook(@"YTIPlayabilityStatus",
                               @"isPlayableInBackground",
                               (IMP)YTKACEBackgroundBoolean,

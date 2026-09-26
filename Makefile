@@ -22,6 +22,7 @@ YTKACE_FILES = \
 	Tweak/Features/SponsorBlock/DeArrow.mm \
 	Tweak/Features/Downloads/StreamResolver.mm \
 	Tweak/Features/Downloads/SABRDownloader.mm \
+	Tweak/Features/Downloads/DirectDownloader.mm \
 	Tweak/Features/Downloads/FFmpegMuxer.mm \
 	Tweak/Features/Downloads/YTKACEBackupManager.mm \
 	Tweak/Features/Downloads/YTKACEMediaImporter.mm \
@@ -29,6 +30,7 @@ YTKACE_FILES = \
 	Tweak/Features/Downloads/DownloadLog.mm \
 	Tweak/Features/Downloads/DownloadProgressView.mm \
 	Tweak/Features/Downloads/DownloadCoordinator.mm \
+	Tweak/Features/Downloads/DownloadSponsor.mm \
 	Tweak/Features/Downloads/DownloadHooks.mm \
 	Tweak/Features/Downloads/PlaylistDownloader.mm \
 	Tweak/Features/Downloads/YTKACEDownloadPlayerController.mm \
@@ -83,6 +85,7 @@ YTKACE_FILES = \
 
 YTKACE_CFLAGS = -fobjc-arc -Wall -Wextra -Werror=return-type
 YTKACE_CFLAGS += -DYTKACE_COMBINED_SABR=1
+YTKACE_CFLAGS += -DYTKACE_VERSION_STRING=\"$(shell awk '/^Version:/ {print $$2}' $(THEOS_PROJECT_DIR)/control)\"
 YTKACE_CFLAGS += -Wno-module-import-in-extern-c
 YTKACE_CFLAGS += -I$(THEOS_PROJECT_DIR)/Vendor/FFmpeg/include
 YTKACE_CCFLAGS = -std=c++17

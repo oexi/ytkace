@@ -1,8 +1,10 @@
 #import "../../YTKACE.h"
 #import "../../Runtime/Hooking.h"
 #import "../../Runtime/Preferences.h"
+#import "../Downloads/YTKACEDownloadPlayerController.h"
 
 #import <Foundation/Foundation.h>
+#import <AVFoundation/AVFoundation.h>
 #import <objc/runtime.h>
 #import <objc/message.h>
 
@@ -20,7 +22,13 @@ static id YTKACEShortsPiPOwner(id controller) {
     return object_getIvar(controller, ivar);
 }
 
+static BOOL YTKACELibraryOwnsPiP(void) {
+    YTKACEDownloadPlaybackSession *session = YTKACEDownloadPlaybackSession.sharedSession;
+    return session.currentURL != nil && session.player.rate != 0.0f;
+}
+
 static BOOL YTKACEShortsBlocksPiP(id controller) {
+    if (YTKACELibraryOwnsPiP()) return YES;
     if (!YTKACEFeatureEnabled(YTKACEShortsPiPKey)) return NO;
     SEL parentSel = NSSelectorFromString(@"parentResponder");
     id current = YTKACEShortsPiPOwner(controller);
@@ -43,7 +51,9 @@ static BOOL YTKACEShortsAllowed(id self, SEL _cmd) {
 
 static BOOL YTKACEShortsEligible(id self, SEL _cmd) {
     if (YTKACEShortsBlocksPiP(self)) return NO;
-    return ((BOOL (*)(id, SEL))YTKACEShortsOrigEligible)(self, _cmd);
+    BOOL eligible = ((BOOL (*)(id, SEL))YTKACEShortsOrigEligible)(self, _cmd);
+    if (!eligible && YTKACEFeatureEnabled(YTKACEBackgroundPlaybackKey)) return YES;
+    return eligible;
 }
 
 static BOOL YTKACEShortsCanEnable(id self, SEL _cmd) {

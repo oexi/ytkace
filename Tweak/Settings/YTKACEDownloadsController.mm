@@ -11,6 +11,7 @@
 #import "../Features/Downloads/YTKACEDownloadPlayerController.h"
 #import "../Features/Downloads/YTKACEAudioPlayerController.h"
 #import "../Features/Downloads/MediaArtwork.h"
+#import "../Features/Downloads/DownloadSponsor.h"
 
 #import <AVFoundation/AVFoundation.h>
 #import <CoreMedia/CoreMedia.h>
@@ -447,6 +448,14 @@ static void YTKACEStoreMode(NSString *field, NSInteger segment, NSInteger mode) 
     [NSNotificationCenter.defaultCenter addObserver:self
         selector:@selector(downloadLibraryChanged:)
         name:YTKACEDownloadLibraryChanged object:nil];
+    [NSNotificationCenter.defaultCenter addObserver:self
+        selector:@selector(downloadInfoChanged:)
+        name:YTKACEDownloadInfoDidChangeNotification object:nil];
+}
+
+- (void)downloadInfoChanged:(NSNotification *)notification {
+    (void)notification;
+    [self.collectionView reloadData];
 }
 
 - (void)viewWillAppear:(BOOL)animated {
@@ -1025,9 +1034,12 @@ minimumInteritemSpacingForSectionAtIndex:(NSInteger)section {
     cell.resolutionLabel.text = resolution.length != 0 ? resolution : YTKACELocalized(@"Audio");
     NSString *sizeText = [NSByteCountFormatter stringFromByteCount:size
                                                         countStyle:NSByteCountFormatterCountStyleFile];
-    cell.metadataLabel.text = cell.layoutMode == 2
+    NSString *details = cell.layoutMode == 2
         ? sizeText
         : [NSString stringWithFormat:@"%@  |  %@", sizeText, duration];
+    NSString *channel = YTKACEStoredChannelName([NSURL fileURLWithPath:path]);
+    cell.metadataLabel.text = channel.length != 0
+        ? [NSString stringWithFormat:@"%@  ·  %@", channel, details] : details;
     cell.thumbnailView.image = image;
     cell.placeholderView.hidden = image != nil;
 }

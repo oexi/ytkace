@@ -354,6 +354,16 @@ static void YTKACEEvaluateSponsorTime(id controller, double time) {
         }];
 }
 
+static __weak id YTKACELastPlayerController;
+
+void YTKACEPauseYouTubePlayer(void) {
+    id controller = YTKACELastPlayerController;
+    SEL pause = NSSelectorFromString(@"pause");
+    if ([controller respondsToSelector:pause]) {
+        ((void (*)(id, SEL))objc_msgSend)(controller, pause);
+    }
+}
+
 static void YTKACEDidActivateVideo(id receiver,
                                    SEL selector,
                                    id playbackController,
@@ -366,6 +376,7 @@ static void YTKACEDidActivateVideo(id receiver,
     }
 
     YTKACEOpenPausedVideoActivated(receiver);
+    YTKACELastPlayerController = receiver;
 
     if (!YTKACESponsorBlockEnabled()) {
         objc_setAssociatedObject(receiver,

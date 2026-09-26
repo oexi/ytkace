@@ -2,10 +2,17 @@
 #import "../../YTKACE.h"
 #import "../../Runtime/Localization.h"
 #import "../../Runtime/Preferences.h"
+#import "../../Runtime/Hooking.h"
 #import "MediaArtwork.h"
+#import "DownloadSponsor.h"
+#import "GlobalDownloadMiniPlayer.h"
+#import "DownloadLog.h"
+#import "../SponsorBlock/SponsorPreferences.h"
 #import "../../Settings/YTKACESettingsPages.h"
+#import "../../UI/Assets.h"
 
 #import <AVFoundation/AVFoundation.h>
+#import <AVKit/AVKit.h>
 #import <MediaPlayer/MediaPlayer.h>
 #import <math.h>
 
@@ -13,6 +20,16 @@ NSNotificationName const YTKACEDownloadPlaybackDidChangeNotification =
     @"YTKACEDownloadPlaybackDidChangeNotification";
 NSNotificationName const YTKACEDownloadPlaybackDidStopNotification =
     @"YTKACEDownloadPlaybackDidStopNotification";
+NSNotificationName const YTKACEDownloadSponsorDidSkipNotification =
+    @"YTKACEDownloadSponsorDidSkipNotification";
+NSNotificationName const YTKACEDownloadSponsorPromptNotification =
+    @"YTKACEDownloadSponsorPromptNotification";
+NSNotificationName const YTKACELibraryPiPDidChangeNotification =
+    @"YTKACELibraryPiPDidChangeNotification";
+NSNotificationName const YTKACELibraryFullPlayerWillShowNotification =
+    @"YTKACELibraryFullPlayerWillShowNotification";
+NSNotificationName const YTKACELibraryFullPlayerWillHideNotification =
+    @"YTKACELibraryFullPlayerWillHideNotification";
 
 static NSString *YTKACEPlayerTimeText(NSTimeInterval duration) {
     if (!isfinite(duration) || duration < 0.0) {
@@ -109,61 +126,6 @@ static NSArray<YTKACESubtitleCue *> *YTKACEReadSubtitles(NSURL *mediaURL) {
     return cues;
 }
 
-static NSArray<YTKACESubtitleCue *> *YTKACEReadEmbeddedSubtitles(NSURL *mediaURL) {
-    if (mediaURL == nil) return @[];
-    AVURLAsset *asset = [AVURLAsset URLAssetWithURL:mediaURL options:nil];
-    NSArray<AVAssetTrack *> *tracks =
-        [asset tracksWithMediaType:AVMediaTypeSubtitle];
-    if (tracks.count == 0) tracks = [asset tracksWithMediaType:AVMediaTypeText];
-    if (tracks.count == 0) return @[];
-    NSError *error = nil;
-    AVAssetReader *reader = [[AVAssetReader alloc] initWithAsset:asset
-                                                           error:&error];
-    if (reader == nil) return @[];
-    AVAssetReaderTrackOutput *output =
-        [[AVAssetReaderTrackOutput alloc] initWithTrack:tracks.firstObject
-                                         outputSettings:nil];
-    if (![reader canAddOutput:output]) return @[];
-    [reader addOutput:output];
-    if (![reader startReading]) return @[];
-
-    NSMutableArray<YTKACESubtitleCue *> *cues = [NSMutableArray array];
-    CMSampleBufferRef sample = NULL;
-    while ((sample = [output copyNextSampleBuffer]) != NULL) {
-        const CMTime start = CMSampleBufferGetPresentationTimeStamp(sample);
-        const CMTime duration = CMSampleBufferGetDuration(sample);
-        CMBlockBufferRef block = CMSampleBufferGetDataBuffer(sample);
-        const size_t length = block != NULL
-            ? CMBlockBufferGetDataLength(block) : 0;
-        if (block != NULL && length > 2) {
-            uint8_t *bytes = (uint8_t *)malloc(length);
-            if (bytes != NULL) {
-                if (CMBlockBufferCopyDataBytes(block, 0, length, bytes) ==
-                        kCMBlockBufferNoErr) {
-                    const NSUInteger textLength =
-                        (NSUInteger)((bytes[0] << 8) | bytes[1]);
-                    if (textLength > 0 && textLength + 2 <= length) {
-                        NSString *text = [[NSString alloc]
-                            initWithBytes:bytes + 2
-                                   length:textLength
-                                 encoding:NSUTF8StringEncoding];
-                        if (text.length != 0) {
-                            YTKACESubtitleCue *cue = [YTKACESubtitleCue new];
-                            cue.start = CMTimeGetSeconds(start);
-                            cue.end = cue.start + CMTimeGetSeconds(duration);
-                            cue.text = text;
-                            if (cue.end > cue.start) [cues addObject:cue];
-                        }
-                    }
-                }
-                free(bytes);
-            }
-        }
-        CFRelease(sample);
-    }
-    return cues;
-}
-
 @interface YTKACEDownloadPlaybackSession ()
 @property(nonatomic, strong, readwrite) AVPlayer *player;
 @property(nonatomic, strong) id resumeObserver;
@@ -171,6 +133,10 @@ static NSArray<YTKACESubtitleCue *> *YTKACEReadEmbeddedSubtitles(NSURL *mediaURL
 @property(nonatomic, copy, readwrite) NSArray<NSURL *> *playlist;
 @property(nonatomic, assign, readwrite) NSInteger currentIndex;
 @property(nonatomic, assign) BOOL continueInBackground;
+@property(nonatomic, strong) id sponsorObserver;
+@property(nonatomic, copy, readwrite) NSArray<NSDictionary<NSString *, id> *> *sponsorSegments;
+@property(nonatomic, copy, readwrite, nullable) NSDictionary<NSString *, id> *promptedSegment;
+@property(nonatomic, strong) NSMutableSet<NSNumber *> *handledSegments;
 @end
 
 @implementation YTKACEDownloadPlaybackSession
@@ -191,6 +157,8 @@ static NSArray<YTKACESubtitleCue *> *YTKACEReadEmbeddedSubtitles(NSURL *mediaURL
     }
     self.player = [AVPlayer new];
     self.playlist = @[];
+    self.sponsorSegments = @[];
+    self.handledSegments = [NSMutableSet set];
     self.currentIndex = NSNotFound;
     self.autoplayEnabled = YES;
     self.gesturesEnabled = NO;
@@ -198,6 +166,7 @@ static NSArray<YTKACESubtitleCue *> *YTKACEReadEmbeddedSubtitles(NSURL *mediaURL
     double defaultRate = YTKACEStartPlaybackRate();
     self.playbackRate = defaultRate >= 0.25 ? (float)defaultRate : 1.0f;
     self.player.allowsExternalPlayback = YES;
+    self.player.appliesMediaSelectionCriteriaAutomatically = NO;
     if (@available(iOS 15.0, *)) {
         self.player.audiovisualBackgroundPlaybackPolicy =
             AVPlayerAudiovisualBackgroundPlaybackPolicyContinuesIfPossible;
@@ -213,7 +182,23 @@ static NSArray<YTKACESubtitleCue *> *YTKACEReadEmbeddedSubtitles(NSURL *mediaURL
     [NSNotificationCenter.defaultCenter addObserver:self
         selector:@selector(applicationDidEnterBackground:)
         name:UIApplicationDidEnterBackgroundNotification object:nil];
+    [NSNotificationCenter.defaultCenter addObserver:self
+        selector:@selector(downloadInfoChanged:)
+        name:YTKACEDownloadInfoDidChangeNotification object:nil];
     return self;
+}
+
+- (void)downloadInfoChanged:(NSNotification *)notification {
+    NSURL *URL = notification.object;
+    if (![URL isKindOfClass:NSURL.class] || self.currentURL == nil ||
+        ![URL.path isEqualToString:self.currentURL.path]) {
+        return;
+    }
+    NSArray *stored = YTKACEStoredSponsorSegments(self.currentURL);
+    if ([stored isEqualToArray:self.sponsorSegments]) return;
+    self.sponsorSegments = stored;
+    [self.handledSegments removeAllObjects];
+    [self notifyChange];
 }
 
 static NSString * const YTKACEResumeKey = @"YTKACE.Preference.Downloads.ResumePositions";
@@ -485,6 +470,10 @@ static void YTKACEStoreCompleted(NSURL *URL, NSTimeInterval duration,
         [self.player removeTimeObserver:self.resumeObserver];
         self.resumeObserver = nil;
     }
+    if (self.sponsorObserver != nil) {
+        [self.player removeTimeObserver:self.sponsorObserver];
+        self.sponsorObserver = nil;
+    }
     [NSNotificationCenter.defaultCenter removeObserver:self];
 }
 
@@ -501,6 +490,7 @@ static void YTKACEStoreCompleted(NSURL *URL, NSTimeInterval duration,
         self.currentURL = URL;
         [self.player replaceCurrentItemWithPlayerItem:
             [AVPlayerItem playerItemWithURL:URL]];
+        [self loadSponsorSegmentsForURL:URL];
         NSTimeInterval resume = YTKACEStoredResume(URL);
         if (resume > 0.0) {
             [self.player seekToTime:CMTimeMakeWithSeconds(resume, 600)
@@ -520,7 +510,94 @@ static void YTKACEStoreCompleted(NSURL *URL, NSTimeInterval duration,
     [self notifyChange];
 }
 
+- (void)loadSponsorSegmentsForURL:(NSURL *)URL {
+    [self.handledSegments removeAllObjects];
+    [self setPrompt:nil];
+    self.sponsorSegments = YTKACEStoredSponsorSegments(URL);
+    __weak YTKACEDownloadPlaybackSession *weakSelf = self;
+    YTKACERefreshSponsorSegments(URL, ^(NSArray<NSDictionary<NSString *, id> *> *segments) {
+        YTKACEDownloadPlaybackSession *strongSelf = weakSelf;
+        if (strongSelf == nil || ![strongSelf.currentURL isEqual:URL]) return;
+        strongSelf.sponsorSegments = segments;
+        [strongSelf.handledSegments removeAllObjects];
+        [strongSelf notifyChange];
+    });
+}
+
+- (void)setPrompt:(NSDictionary<NSString *, id> *)segment {
+    if (segment == self.promptedSegment ||
+        [segment isEqualToDictionary:self.promptedSegment]) {
+        return;
+    }
+    self.promptedSegment = segment;
+    [NSNotificationCenter.defaultCenter
+        postNotificationName:YTKACEDownloadSponsorPromptNotification object:self];
+}
+
+- (void)evaluateSponsorSegmentsAtTime:(NSTimeInterval)time {
+    if (!YTKACESponsorBlockEnabled() || self.sponsorSegments.count == 0 ||
+        !isfinite(time)) {
+        [self setPrompt:nil];
+        return;
+    }
+    NSDictionary<NSString *, id> *prompt = nil;
+    for (NSUInteger index = 0; index < self.sponsorSegments.count; index++) {
+        NSDictionary<NSString *, id> *segment = self.sponsorSegments[index];
+        double start = [segment[@"start"] doubleValue];
+        double end = [segment[@"end"] doubleValue];
+        NSInteger behavior = YTKACESponsorCategoryBehavior(segment[@"category"]);
+        if (behavior == 2 || behavior == 3) continue;
+        NSNumber *token = @(index);
+        if (time < start - 1.0) [self.handledSegments removeObject:token];
+        BOOL inside = time >= start && time < end - 0.25;
+        if (!inside) continue;
+        if (behavior == 1) {
+            if (![self.handledSegments containsObject:token]) prompt = segment;
+            continue;
+        }
+        if ([self.handledSegments containsObject:token]) continue;
+        [self.handledSegments addObject:token];
+        [self skipSegment:segment];
+        break;
+    }
+    [self setPrompt:prompt];
+}
+
+- (void)skipSegment:(NSDictionary<NSString *, id> *)segment {
+    NSUInteger index = [self.sponsorSegments indexOfObject:segment];
+    if (index != NSNotFound) [self.handledSegments addObject:@(index)];
+    [self setPrompt:nil];
+    [self seekToTime:[segment[@"end"] doubleValue]];
+    if (YTKACEFeatureEnabled(@"YTKACE.Preference.SponsorBlock.AudioFeedback")) {
+        [[UINotificationFeedbackGenerator new]
+            notificationOccurred:UINotificationFeedbackTypeSuccess];
+    }
+    [NSNotificationCenter.defaultCenter
+        postNotificationName:YTKACEDownloadSponsorDidSkipNotification
+                      object:self userInfo:@{@"segment": segment}];
+}
+
+- (void)seekToTime:(NSTimeInterval)seconds {
+    NSTimeInterval duration = CMTimeGetSeconds(self.player.currentItem.duration);
+    NSTimeInterval target = MAX(0.0, isfinite(seconds) ? seconds : 0.0);
+    if (isfinite(duration) && duration > 0.0) target = MIN(target, duration);
+    [self.player seekToTime:CMTimeMakeWithSeconds(target, 600)
+            toleranceBefore:kCMTimeZero toleranceAfter:kCMTimeZero];
+    [self notifyChange];
+}
+
 - (void)beginTrackingPosition {
+    if (self.sponsorObserver == nil) {
+        __weak YTKACEDownloadPlaybackSession *weakSelf = self;
+        self.sponsorObserver = [self.player
+            addPeriodicTimeObserverForInterval:CMTimeMakeWithSeconds(0.3, 600)
+                                         queue:dispatch_get_main_queue()
+                                    usingBlock:^(CMTime time) {
+            YTKACEDownloadPlaybackSession *strongSelf = weakSelf;
+            if (strongSelf.player.rate == 0.0f) return;
+            [strongSelf evaluateSponsorSegmentsAtTime:CMTimeGetSeconds(time)];
+        }];
+    }
     if (self.resumeObserver != nil) return;
     __weak YTKACEDownloadPlaybackSession *weakSelf = self;
     self.resumeObserver = [self.player
@@ -533,10 +610,12 @@ static void YTKACEStoreCompleted(NSURL *URL, NSTimeInterval duration,
 }
 
 - (void)play {
+    YTKACEPauseYouTubePlayer();
     [self configureAudioSession];
     [self beginTrackingPosition];
     [self.player play];
     self.player.rate = MAX(0.25f, MIN(self.playbackRate, 5.0f));
+    if ([YTKACELibraryPiP sharedPiP].automatic) [[YTKACELibraryPiP sharedPiP] silenceOtherControllers];
     [self notifyChange];
 }
 
@@ -610,7 +689,10 @@ static void YTKACEStoreCompleted(NSURL *URL, NSTimeInterval duration,
     [self.player replaceCurrentItemWithPlayerItem:nil];
     self.currentURL = nil;
     self.playlist = @[];
+    self.sponsorSegments = @[];
+    [self setPrompt:nil];
     self.currentIndex = NSNotFound;
+    [[YTKACELibraryPiP sharedPiP] stop];
     [NSNotificationCenter.defaultCenter
         postNotificationName:YTKACEDownloadPlaybackDidStopNotification object:self];
 }
@@ -671,6 +753,246 @@ static void YTKACEStoreCompleted(NSURL *URL, NSTimeInterval duration,
 
 @end
 
+static NSHashTable<AVPictureInPictureController *> *YTKACEAllPiPControllers(void) {
+    static NSHashTable *table;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{ table = [NSHashTable weakObjectsHashTable]; });
+    return table;
+}
+
+static IMP YTKACEOrigPiPInitLayer;
+static IMP YTKACEOrigPiPInitSource;
+static IMP YTKACEOrigPiPSetAuto;
+
+static id YTKACEPiPInitLayer(id self, SEL _cmd, id layer) {
+    id result = ((id (*)(id, SEL, id))YTKACEOrigPiPInitLayer)(self, _cmd, layer);
+    if (result != nil) [YTKACEAllPiPControllers() addObject:result];
+    return result;
+}
+
+static id YTKACEPiPInitSource(id self, SEL _cmd, id source) {
+    id result = ((id (*)(id, SEL, id))YTKACEOrigPiPInitSource)(self, _cmd, source);
+    if (result != nil) [YTKACEAllPiPControllers() addObject:result];
+    return result;
+}
+
+static BOOL YTKACELibraryClaimsPiP(void);
+static AVPictureInPictureController *YTKACELibraryPiPController(void);
+
+static void YTKACEPiPSetAuto(id self, SEL _cmd, BOOL value) {
+    if (value && self != YTKACELibraryPiPController() && YTKACELibraryClaimsPiP()) value = NO;
+    ((void (*)(id, SEL, BOOL))YTKACEOrigPiPSetAuto)(self, _cmd, value);
+}
+
+__attribute__((constructor)) static void YTKACEInstallPiPTracking(void) {
+    YTKACEInstallInstanceHook(@"AVPictureInPictureController", @"initWithPlayerLayer:",
+        (IMP)YTKACEPiPInitLayer, &YTKACEOrigPiPInitLayer);
+    YTKACEInstallInstanceHook(@"AVPictureInPictureController", @"initWithContentSource:",
+        (IMP)YTKACEPiPInitSource, &YTKACEOrigPiPInitSource);
+    YTKACEInstallInstanceHook(@"AVPictureInPictureController",
+        @"setCanStartPictureInPictureAutomaticallyFromInline:",
+        (IMP)YTKACEPiPSetAuto, &YTKACEOrigPiPSetAuto);
+}
+
+@interface YTKACELibraryPiP () <AVPictureInPictureControllerDelegate>
+@property(nonatomic, strong, nullable) AVPictureInPictureController *controller;
+@property(nonatomic, weak) AVPlayerLayer *layer;
+@property(nonatomic, weak) UIView *owner;
+@property(nonatomic, strong, nullable) UIView *retainedOwner;
+@property(nonatomic, assign) BOOL startWhenPossible;
+@property(nonatomic, assign, readwrite) BOOL active;
+@end
+
+static NSString * const YTKACELibraryAutoPiPKey = @"YTKACE.Preference.Downloads.AutoPiP";
+
+static BOOL YTKACELibraryClaimsPiP(void) {
+    YTKACEDownloadPlaybackSession *session = YTKACEDownloadPlaybackSession.sharedSession;
+    return [YTKACELibraryPiP sharedPiP].automatic && session.currentURL != nil &&
+        session.player.rate != 0.0f;
+}
+
+static AVPictureInPictureController *YTKACELibraryPiPController(void) {
+    return [[YTKACELibraryPiP sharedPiP] valueForKey:@"controller"];
+}
+
+@implementation YTKACELibraryPiP
+
++ (instancetype)sharedPiP {
+    static YTKACELibraryPiP *pip;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{ pip = [YTKACELibraryPiP new]; });
+    return pip;
+}
+
+- (void)useLayer:(AVPlayerLayer *)layer owner:(UIView *)owner {
+    if (layer == nil || self.active || (layer == self.layer && self.controller != nil)) return;
+    if (![AVPictureInPictureController isPictureInPictureSupported]) return;
+    [self detachController];
+    self.layer = layer;
+    self.owner = owner;
+    AVPictureInPictureController *controller =
+        [[AVPictureInPictureController alloc] initWithPlayerLayer:layer];
+    controller.delegate = self;
+    if (@available(iOS 14.2, *)) {
+        controller.canStartPictureInPictureAutomaticallyFromInline = self.automatic;
+    }
+    [controller addObserver:self forKeyPath:@"pictureInPicturePossible"
+                    options:NSKeyValueObservingOptionNew context:NULL];
+    self.controller = controller;
+    static BOOL observing;
+    if (!observing) {
+        observing = YES;
+        [NSNotificationCenter.defaultCenter addObserverForName:
+            UIApplicationWillResignActiveNotification object:nil queue:nil
+            usingBlock:^(__unused NSNotification *note) {
+                [[YTKACELibraryPiP sharedPiP] startForBackground];
+            }];
+    }
+}
+
+- (void)detachController {
+    if (self.controller == nil) return;
+    [self.controller removeObserver:self forKeyPath:@"pictureInPicturePossible"];
+    self.controller.delegate = nil;
+    self.controller = nil;
+}
+
+- (BOOL)automatic {
+    return [NSUserDefaults.standardUserDefaults boolForKey:YTKACELibraryAutoPiPKey];
+}
+
+- (void)setAutomatic:(BOOL)automatic {
+    [NSUserDefaults.standardUserDefaults setBool:automatic forKey:YTKACELibraryAutoPiPKey];
+    if (@available(iOS 14.2, *)) {
+        self.controller.canStartPictureInPictureAutomaticallyFromInline = automatic;
+    }
+}
+
+- (BOOL)isUsingLayer:(AVPlayerLayer *)layer {
+    return layer != nil && layer == self.layer && self.controller != nil;
+}
+
+- (void)start {
+    if (self.controller == nil || self.active) return;
+    if (self.controller.isPictureInPicturePossible) {
+        self.startWhenPossible = NO;
+        [self.controller startPictureInPicture];
+    } else {
+        self.startWhenPossible = YES;
+    }
+}
+
+- (NSHashTable<AVPictureInPictureController *> *)silenced {
+    static NSHashTable *table;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{ table = [NSHashTable weakObjectsHashTable]; });
+    return table;
+}
+
+- (void)silenceOtherControllers {
+    if (@available(iOS 14.2, *)) {
+        for (AVPictureInPictureController *controller in YTKACEAllPiPControllers().allObjects) {
+            if (controller == self.controller) continue;
+            if (controller.canStartPictureInPictureAutomaticallyFromInline) {
+                ((void (*)(id, SEL, BOOL))YTKACEOrigPiPSetAuto)(controller,
+                    @selector(setCanStartPictureInPictureAutomaticallyFromInline:), NO);
+                [self.silenced addObject:controller];
+            }
+        }
+    }
+}
+
+- (void)restoreOtherControllers {
+    if (@available(iOS 14.2, *)) {
+        for (AVPictureInPictureController *controller in self.silenced.allObjects) {
+            ((void (*)(id, SEL, BOOL))YTKACEOrigPiPSetAuto)(controller,
+                @selector(setCanStartPictureInPictureAutomaticallyFromInline:), YES);
+        }
+        [self.silenced removeAllObjects];
+    }
+}
+
+- (void)startForBackground {
+    AVPlayerLayer *layer = self.layer;
+    if (YTKACELibraryClaimsPiP()) {
+        [self silenceOtherControllers];
+    } else {
+        [self restoreOtherControllers];
+    }
+    if (!self.automatic || self.active || self.controller == nil ||
+        layer.player == nil || layer.player.rate == 0.0f || self.owner.window == nil ||
+        !self.controller.isPictureInPicturePossible) {
+        return;
+    }
+    [self.controller startPictureInPicture];
+}
+
+- (void)stop {
+    self.startWhenPossible = NO;
+    if (self.controller.isPictureInPictureActive) {
+        [self.controller stopPictureInPicture];
+    }
+}
+
+- (void)observeValueForKeyPath:(NSString *)keyPath
+                      ofObject:(id)object
+                        change:(NSDictionary<NSKeyValueChangeKey, id> *)change
+                       context:(void *)context {
+    (void)keyPath;
+    (void)change;
+    (void)context;
+    if (object != self.controller || !self.startWhenPossible) return;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if (self.startWhenPossible && self.controller.isPictureInPicturePossible) {
+            self.startWhenPossible = NO;
+            [self.controller startPictureInPicture];
+        }
+    });
+}
+
+- (void)postChange {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [NSNotificationCenter.defaultCenter
+            postNotificationName:YTKACELibraryPiPDidChangeNotification object:self];
+    });
+}
+
+- (void)pictureInPictureControllerWillStartPictureInPicture:
+    (AVPictureInPictureController *)pictureInPictureController {
+    (void)pictureInPictureController;
+    self.active = YES;
+    self.retainedOwner = self.owner;
+    [self postChange];
+}
+
+- (void)pictureInPictureController:(AVPictureInPictureController *)pictureInPictureController
+    failedToStartPictureInPictureWithError:(NSError *)error {
+    (void)pictureInPictureController;
+    (void)error;
+    self.active = NO;
+    self.retainedOwner = nil;
+    [self postChange];
+}
+
+- (void)pictureInPictureControllerDidStopPictureInPicture:
+    (AVPictureInPictureController *)pictureInPictureController {
+    (void)pictureInPictureController;
+    self.active = NO;
+    self.retainedOwner = nil;
+    [self postChange];
+}
+
+- (void)pictureInPictureController:(AVPictureInPictureController *)pictureInPictureController
+    restoreUserInterfaceForPictureInPictureStopWithCompletionHandler:
+        (void (^)(BOOL restored))completionHandler {
+    (void)pictureInPictureController;
+    void (^handler)(UIView *) = self.restoreHandler;
+    if (handler != nil) handler(self.retainedOwner);
+    completionHandler(YES);
+}
+
+@end
+
 @interface YTKACEPlayerSurface : UIView
 @property(nonatomic, strong) AVPlayer *player;
 @end
@@ -685,16 +1007,220 @@ static void YTKACEStoreCompleted(NSURL *URL, NSTimeInterval duration,
 }
 @end
 
-@interface YTKACEDownloadPlayerController () <UIGestureRecognizerDelegate>
+UIView *YTKACELibraryVideoView(void) {
+    static YTKACEPlayerSurface *view;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        view = [YTKACEPlayerSurface new];
+        view.backgroundColor = UIColor.blackColor;
+        view.userInteractionEnabled = NO;
+        view.player = YTKACEDownloadPlaybackSession.sharedSession.player;
+    });
+    return view;
+}
+
+AVPlayerLayer *YTKACELibraryVideoLayer(void) {
+    return (AVPlayerLayer *)YTKACELibraryVideoView().layer;
+}
+
+static NSString *YTKACELibrarySponsorTitle(NSString *category) {
+    for (NSDictionary *definition in YTKACESponsorCategoryDefinitions()) {
+        if ([definition[@"id"] isEqualToString:category]) return definition[@"title"];
+    }
+    return YTKACELocalized(@"Sponsor");
+}
+
+static UIImage *YTKACEScrubberThumb(CGFloat diameter, UIColor *color) {
+    UIGraphicsImageRenderer *renderer = [[UIGraphicsImageRenderer alloc]
+        initWithSize:CGSizeMake(diameter, diameter)];
+    return [renderer imageWithActions:^(UIGraphicsImageRendererContext *context) {
+        (void)context;
+        [color setFill];
+        [[UIBezierPath bezierPathWithOvalInRect:
+            CGRectMake(0.0, 0.0, diameter, diameter)] fill];
+    }];
+}
+
+@interface YTKACESegmentMarksView : UIView
+@property(nonatomic, copy) NSArray<NSDictionary<NSString *, id> *> *segments;
+@property(nonatomic, assign) NSTimeInterval duration;
+@property(nonatomic, assign) CGFloat progress;
+@end
+
+@implementation YTKACESegmentMarksView
+
+- (void)drawRect:(CGRect)rect {
+    (void)rect;
+    CGFloat width = CGRectGetWidth(self.bounds);
+    CGFloat height = CGRectGetHeight(self.bounds);
+    [[UIColor colorWithWhite:1.0 alpha:0.3] setFill];
+    UIRectFill(self.bounds);
+    [UIColor.systemRedColor setFill];
+    UIRectFill(CGRectMake(0.0, 0.0, width * MAX(0.0, MIN(1.0, self.progress)), height));
+    if (!isfinite(self.duration) || self.duration <= 0.0 || !YTKACESponsorBlockEnabled()) {
+        return;
+    }
+    for (NSDictionary<NSString *, id> *segment in self.segments) {
+        NSString *category = segment[@"category"];
+        if (YTKACESponsorCategoryBehavior(category) == 2) continue;
+        CGFloat start = (CGFloat)([segment[@"start"] doubleValue] / self.duration) * width;
+        CGFloat end = (CGFloat)([segment[@"end"] doubleValue] / self.duration) * width;
+        start = MAX(0.0, MIN(width, start));
+        end = MAX(start + 1.0, MIN(width, end));
+        [YTKACESponsorCategoryColor(category) setFill];
+        UIRectFill(CGRectMake(start, 0.0, end - start, height));
+    }
+}
+
+@end
+
+@interface YTKACESegmentSlider : UISlider
+@property(nonatomic, strong) YTKACESegmentMarksView *marksView;
+- (void)updateProgress;
+@end
+
+@implementation YTKACESegmentSlider
+
+- (instancetype)initWithFrame:(CGRect)frame {
+    self = [super initWithFrame:frame];
+    if (self == nil) return nil;
+    self.marksView = [YTKACESegmentMarksView new];
+    self.marksView.backgroundColor = UIColor.clearColor;
+    self.marksView.userInteractionEnabled = NO;
+    [self insertSubview:self.marksView atIndex:0];
+    UIImage *clear = [UIImage new];
+    [self setMinimumTrackImage:clear forState:UIControlStateNormal];
+    [self setMaximumTrackImage:clear forState:UIControlStateNormal];
+    return self;
+}
+
+- (CGRect)trackRectForBounds:(CGRect)bounds {
+    CGRect rect = [super trackRectForBounds:bounds];
+    rect.size.height = 3.0;
+    rect.origin.y = CGRectGetMidY(bounds) - 1.5;
+    return rect;
+}
+
+- (void)layoutSubviews {
+    [super layoutSubviews];
+    CGRect track = [self trackRectForBounds:self.bounds];
+    if (!CGRectEqualToRect(self.marksView.frame, track)) {
+        self.marksView.frame = track;
+        [self.marksView setNeedsDisplay];
+    }
+    [self sendSubviewToBack:self.marksView];
+    [self updateProgress];
+}
+
+- (void)updateProgress {
+    CGFloat range = self.maximumValue - self.minimumValue;
+    CGFloat progress = range > 0.0 ? (self.value - self.minimumValue) / range : 0.0;
+    if (fabs(progress - self.marksView.progress) < 0.0005) return;
+    self.marksView.progress = progress;
+    [self.marksView setNeedsDisplay];
+}
+
+- (void)setValue:(float)value animated:(BOOL)animated {
+    [super setValue:value animated:animated];
+    [self updateProgress];
+}
+
+- (void)setValue:(float)value {
+    [super setValue:value];
+    [self updateProgress];
+}
+
+- (void)setSegments:(NSArray *)segments duration:(NSTimeInterval)duration {
+    if ([self.marksView.segments isEqualToArray:segments] &&
+        self.marksView.duration == duration) {
+        return;
+    }
+    self.marksView.segments = segments;
+    self.marksView.duration = duration;
+    [self.marksView setNeedsDisplay];
+}
+
+@end
+
+@interface YTKACEPlayerTransition : NSObject <UIViewControllerAnimatedTransitioning>
+@property(nonatomic, assign) BOOL presenting;
+@property(nonatomic, assign) CGRect miniFrame;
+@end
+
+@implementation YTKACEPlayerTransition
+
+- (NSTimeInterval)transitionDuration:(id<UIViewControllerContextTransitioning>)context {
+    (void)context;
+    return 0.34;
+}
+
+- (void)animateTransition:(id<UIViewControllerContextTransitioning>)context {
+    UIView *container = context.containerView;
+    UIViewController *player = [context viewControllerForKey:self.presenting
+        ? UITransitionContextToViewControllerKey : UITransitionContextFromViewControllerKey];
+    UIView *view = player.view;
+    CGRect full = [context finalFrameForViewController:player];
+    if (CGRectIsEmpty(full)) full = container.bounds;
+    CGRect mini = CGRectIsNull(self.miniFrame) || CGRectIsEmpty(self.miniFrame)
+        ? CGRectNull : [container convertRect:self.miniFrame fromView:nil];
+    CGRect offscreen = CGRectOffset(full, 0.0, CGRectGetHeight(full));
+    CGRect collapsed = CGRectIsNull(mini) ? offscreen : mini;
+    UIView *controls = [player valueForKey:@"controlsView"];
+    view.clipsToBounds = YES;
+    if (!self.presenting) {
+        UIView *below = [context viewForKey:UITransitionContextToViewKey];
+        UIViewController *belowController =
+            [context viewControllerForKey:UITransitionContextToViewControllerKey];
+        if (below != nil && below.superview == nil) {
+            below.frame = [context finalFrameForViewController:belowController];
+            [container insertSubview:below atIndex:0];
+        }
+    }
+    if (self.presenting) {
+        [container addSubview:view];
+        view.frame = collapsed;
+        view.layer.cornerRadius = CGRectIsNull(mini) ? 0.0 : 12.0;
+        controls.alpha = 0.0;
+        [view layoutIfNeeded];
+    }
+    CGRect target = self.presenting ? full : collapsed;
+    CGFloat radius = self.presenting || CGRectIsNull(mini) ? 0.0 : 12.0;
+    if (!self.presenting) controls.alpha = 0.0;
+    [UIView animateWithDuration:[self transitionDuration:context] delay:0.0
+         usingSpringWithDamping:0.9 initialSpringVelocity:0.2
+                        options:UIViewAnimationOptionCurveEaseInOut animations:^{
+        view.frame = target;
+        view.layer.cornerRadius = radius;
+        [view layoutIfNeeded];
+    } completion:^(__unused BOOL finished) {
+        BOOL cancelled = context.transitionWasCancelled;
+        if (self.presenting) {
+            view.layer.cornerRadius = 0.0;
+            [UIView animateWithDuration:0.18 animations:^{ controls.alpha = 1.0; }];
+        } else if (!cancelled) {
+            [NSNotificationCenter.defaultCenter
+                postNotificationName:YTKACELibraryFullPlayerWillHideNotification object:player];
+            [view removeFromSuperview];
+        }
+        [context completeTransition:!cancelled];
+    }];
+}
+
+@end
+
+@interface YTKACEDownloadPlayerController () <UIGestureRecognizerDelegate,
+                                              UIViewControllerTransitioningDelegate>
 @property(nonatomic, strong) YTKACEDownloadPlaybackSession *session;
 @property(nonatomic, strong) YTKACEPlayerSurface *playerSurface;
 @property(nonatomic, strong) UIView *controlsView;
 @property(nonatomic, strong) UIButton *playButton;
 @property(nonatomic, strong) UIButton *repeatButton;
+@property(nonatomic, strong) UIButton *pipButton;
+@property(nonatomic, strong) UIButton *aspectButton;
 @property(nonatomic, strong) UILabel *titleLabel;
-@property(nonatomic, strong) UILabel *elapsedLabel;
-@property(nonatomic, strong) UILabel *durationLabel;
-@property(nonatomic, strong) UISlider *slider;
+@property(nonatomic, strong) UILabel *channelLabel;
+@property(nonatomic, strong) UILabel *timeLabel;
+@property(nonatomic, strong) YTKACESegmentSlider *slider;
 @property(nonatomic, strong) UIView *optionsView;
 @property(nonatomic, strong) UIView *optionsCard;
 @property(nonatomic, strong) UILabel *speedDetail;
@@ -708,11 +1234,24 @@ static void YTKACEStoreCompleted(NSURL *URL, NSTimeInterval duration,
 @property(nonatomic, strong) UILabel *subtitleLabel;
 @property(nonatomic, copy) NSArray<YTKACESubtitleCue *> *subtitleCues;
 @property(nonatomic, copy) NSString *subtitleMediaPath;
+@property(nonatomic, copy) NSString *channelMediaPath;
+@property(nonatomic, strong) AVMediaSelectionGroup *captionGroup;
+@property(nonatomic, copy) NSArray *captionChoices;
+@property(nonatomic, copy) NSArray<NSString *> *captionTitles;
+@property(nonatomic, assign) NSUInteger captionIndex;
 @property(nonatomic, strong) UIButton *captionButton;
 @property(nonatomic, assign) BOOL subtitlesEnabled;
 @property(nonatomic, assign) BOOL scrubbing;
 @property(nonatomic, assign) BOOL aspectFill;
 @property(nonatomic, assign) CGPoint panStart;
+@property(nonatomic, strong) UILabel *seekIndicator;
+@property(nonatomic, strong) NSLayoutConstraint *seekIndicatorX;
+@property(nonatomic, assign) NSInteger seekTotal;
+@property(nonatomic, strong) NSTimer *seekIndicatorTimer;
+@property(nonatomic, strong) UIButton *skipButton;
+@property(nonatomic, strong) UIView *skippedBanner;
+@property(nonatomic, assign) NSTimeInterval skippedStart;
+@property(nonatomic, assign) BOOL minimizing;
 @end
 
 @implementation YTKACEDownloadPlayerController
@@ -721,13 +1260,17 @@ static void YTKACEStoreCompleted(NSURL *URL, NSTimeInterval duration,
     self = [super initWithNibName:nil bundle:nil];
     if (self != nil) {
         self.session = session;
+        self.sourceFrame = CGRectNull;
         self.modalPresentationStyle = UIModalPresentationFullScreen;
+        self.transitioningDelegate = self;
     }
     return self;
 }
 
 - (void)viewDidLoad {
     [super viewDidLoad];
+    [NSNotificationCenter.defaultCenter
+        postNotificationName:YTKACELibraryFullPlayerWillShowNotification object:self];
     self.view.backgroundColor = UIColor.blackColor;
     [self buildPlayer];
     [self buildOptions];
@@ -739,6 +1282,14 @@ static void YTKACEStoreCompleted(NSURL *URL, NSTimeInterval duration,
 - (void)viewWillAppear:(BOOL)animated {
     [super viewWillAppear:animated];
     [self.session play];
+    [[YTKACELibraryPiP sharedPiP] useLayer:self.playerSurface.playerLayer
+                                     owner:self.playerSurface];
+}
+
+- (void)viewDidAppear:(BOOL)animated {
+    [super viewDidAppear:animated];
+    [[YTKACELibraryPiP sharedPiP] useLayer:self.playerSurface.playerLayer
+                                     owner:self.playerSurface];
 }
 
 - (void)viewDidDisappear:(BOOL)animated {
@@ -749,6 +1300,7 @@ static void YTKACEStoreCompleted(NSURL *URL, NSTimeInterval duration,
 - (void)dealloc {
     [self.hideTimer invalidate];
     [self.sleepTimer invalidate];
+    [self.seekIndicatorTimer invalidate];
     [NSNotificationCenter.defaultCenter removeObserver:self];
     if (self.timeObserver != nil) {
         [self.session.player removeTimeObserver:self.timeObserver];
@@ -757,6 +1309,32 @@ static void YTKACEStoreCompleted(NSURL *URL, NSTimeInterval duration,
 
 - (BOOL)prefersStatusBarHidden { return YES; }
 - (BOOL)prefersHomeIndicatorAutoHidden { return YES; }
+- (UIInterfaceOrientationMask)supportedInterfaceOrientations {
+    return UIInterfaceOrientationMaskAllButUpsideDown;
+}
+- (BOOL)shouldAutorotate { return YES; }
+
+- (id<UIViewControllerAnimatedTransitioning>)
+    animationControllerForPresentedController:(UIViewController *)presented
+                         presentingController:(UIViewController *)presenting
+                             sourceController:(UIViewController *)source {
+    (void)presented;
+    (void)presenting;
+    (void)source;
+    YTKACEPlayerTransition *transition = [YTKACEPlayerTransition new];
+    transition.presenting = YES;
+    transition.miniFrame = self.sourceFrame;
+    return transition;
+}
+
+- (id<UIViewControllerAnimatedTransitioning>)
+    animationControllerForDismissedController:(UIViewController *)dismissed {
+    (void)dismissed;
+    YTKACEPlayerTransition *transition = [YTKACEPlayerTransition new];
+    transition.presenting = NO;
+    transition.miniFrame = self.minimizing ? YTKACEMiniPlayerTargetFrame() : CGRectNull;
+    return transition;
+}
 
 - (UIButton *)buttonWithSymbol:(NSString *)symbol
                           size:(CGFloat)size
@@ -772,81 +1350,143 @@ static void YTKACEStoreCompleted(NSURL *URL, NSTimeInterval duration,
     return button;
 }
 
-- (void)buildPlayer {
-    self.playerSurface = [YTKACEPlayerSurface new];
-    self.playerSurface.player = self.session.player;
-    self.playerSurface.userInteractionEnabled = YES;
-    self.playerSurface.translatesAutoresizingMaskIntoConstraints = NO;
-    [self.view addSubview:self.playerSurface];
-    UITapGestureRecognizer *surfaceTap = [[UITapGestureRecognizer alloc]
-        initWithTarget:self action:@selector(toggleControls)];
-    [self.playerSurface addGestureRecognizer:surfaceTap];
+- (void)setSymbol:(NSString *)symbol size:(CGFloat)size forButton:(UIButton *)button {
+    UIImageSymbolConfiguration *configuration =
+        [UIImageSymbolConfiguration configurationWithPointSize:size
+                                                        weight:UIImageSymbolWeightSemibold];
+    [button setImage:[UIImage systemImageNamed:symbol withConfiguration:configuration]
+            forState:UIControlStateNormal];
+}
 
-    self.controlsView = [UIView new];
-    self.controlsView.backgroundColor = [UIColor colorWithWhite:0.0 alpha:0.18];
-    self.controlsView.translatesAutoresizingMaskIntoConstraints = NO;
-    [self.view addSubview:self.controlsView];
-
+- (void)addPlayerGesturesToView:(UIView *)view {
+    UITapGestureRecognizer *doubleTap = [[UITapGestureRecognizer alloc]
+        initWithTarget:self action:@selector(handleDoubleTap:)];
+    doubleTap.numberOfTapsRequired = 2;
+    doubleTap.delegate = self;
+    [view addGestureRecognizer:doubleTap];
     UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc]
         initWithTarget:self action:@selector(toggleControls)];
-    [self.controlsView addGestureRecognizer:tap];
+    tap.delegate = self;
+    [tap requireGestureRecognizerToFail:doubleTap];
+    [view addGestureRecognizer:tap];
     UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc]
         initWithTarget:self action:@selector(handlePan:)];
-    [self.controlsView addGestureRecognizer:pan];
+    pan.delegate = self;
+    [view addGestureRecognizer:pan];
+}
 
-    UIButton *minimize = [self buttonWithSymbol:@"chevron.down" size:21.0
+- (void)buildPlayer {
+    self.playerSurface = (YTKACEPlayerSurface *)YTKACELibraryVideoView();
+    [self.playerSurface removeFromSuperview];
+    self.playerSurface.translatesAutoresizingMaskIntoConstraints = NO;
+    self.playerSurface.playerLayer.videoGravity = AVLayerVideoGravityResizeAspect;
+    [self.view addSubview:self.playerSurface];
+    UIView *gestureView = [UIView new];
+    gestureView.backgroundColor = UIColor.clearColor;
+    gestureView.translatesAutoresizingMaskIntoConstraints = NO;
+    [self.view addSubview:gestureView];
+    [self addPlayerGesturesToView:gestureView];
+    [NSLayoutConstraint activateConstraints:@[
+        [gestureView.topAnchor constraintEqualToAnchor:self.view.topAnchor],
+        [gestureView.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor],
+        [gestureView.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor],
+        [gestureView.bottomAnchor constraintEqualToAnchor:self.view.bottomAnchor]
+    ]];
+
+    self.controlsView = [UIView new];
+    self.controlsView.backgroundColor = [UIColor colorWithWhite:0.0 alpha:0.42];
+    self.controlsView.translatesAutoresizingMaskIntoConstraints = NO;
+    [self.view addSubview:self.controlsView];
+    [self addPlayerGesturesToView:self.controlsView];
+
+    UIButton *minimize = [self buttonWithSymbol:@"chevron.down" size:20.0
                                           action:@selector(minimizePlayer)];
-    UIButton *more = [self buttonWithSymbol:@"ellipsis" size:24.0
-                                      action:@selector(showOptions)];
     self.titleLabel = [UILabel new];
     self.titleLabel.textColor = UIColor.whiteColor;
     self.titleLabel.font = [UIFont systemFontOfSize:16.0 weight:UIFontWeightSemibold];
-    self.titleLabel.numberOfLines = 2;
-    self.titleLabel.textAlignment = NSTextAlignmentCenter;
+    self.titleLabel.numberOfLines = 1;
+    self.titleLabel.lineBreakMode = NSLineBreakByTruncatingTail;
+    self.channelLabel = [UILabel new];
+    self.channelLabel.textColor = [UIColor colorWithWhite:1.0 alpha:0.7];
+    self.channelLabel.font = [UIFont systemFontOfSize:13.0 weight:UIFontWeightRegular];
+    self.channelLabel.lineBreakMode = NSLineBreakByTruncatingTail;
+    UIStackView *titleStack = [[UIStackView alloc] initWithArrangedSubviews:@[
+        self.titleLabel, self.channelLabel
+    ]];
+    titleStack.axis = UILayoutConstraintAxisVertical;
+    titleStack.spacing = 1.0;
+    [titleStack setContentCompressionResistancePriority:UILayoutPriorityDefaultLow
+                                                forAxis:UILayoutConstraintAxisHorizontal];
+    self.captionButton = [self buttonWithSymbol:@"captions.bubble" size:19.0
+                                         action:@selector(toggleSubtitles)];
+    self.pipButton = [self buttonWithSymbol:@"pip.enter" size:19.0
+                                     action:@selector(toggleAutoPictureInPicture)];
+    self.pipButton.hidden = ![AVPictureInPictureController isPictureInPictureSupported];
+    UIButton *more = [self buttonWithSymbol:@"gearshape" size:19.0
+                                      action:@selector(showOptions)];
     UIStackView *top = [[UIStackView alloc] initWithArrangedSubviews:@[
-        minimize, self.titleLabel, more
+        minimize, titleStack, self.captionButton, self.pipButton, more
     ]];
     top.axis = UILayoutConstraintAxisHorizontal;
     top.alignment = UIStackViewAlignmentCenter;
-    top.spacing = 14.0;
+    top.spacing = 6.0;
     top.translatesAutoresizingMaskIntoConstraints = NO;
-    [minimize.widthAnchor constraintEqualToConstant:44.0].active = YES;
-    [minimize.heightAnchor constraintEqualToConstant:44.0].active = YES;
-    [more.widthAnchor constraintEqualToConstant:44.0].active = YES;
-    [more.heightAnchor constraintEqualToConstant:44.0].active = YES;
+    for (UIButton *button in @[minimize, self.captionButton, self.pipButton, more]) {
+        [button.widthAnchor constraintEqualToConstant:44.0].active = YES;
+        [button.heightAnchor constraintEqualToConstant:44.0].active = YES;
+    }
+    [top setCustomSpacing:10.0 afterView:minimize];
+    [top setCustomSpacing:12.0 afterView:titleStack];
     [self.controlsView addSubview:top];
 
-    UIButton *back = [self buttonWithSymbol:@"gobackward.10" size:22.0
-                                      action:@selector(skipBack)];
-    UIButton *previous = [self buttonWithSymbol:@"backward.end.fill" size:22.0
+    UIButton *previous = [self buttonWithSymbol:@"backward.end.fill" size:26.0
                                           action:@selector(previousItem)];
-    self.playButton = [self buttonWithSymbol:@"pause.fill" size:48.0
+    self.playButton = [self buttonWithSymbol:@"pause.fill" size:40.0
                                       action:@selector(togglePlayback)];
-    UIButton *next = [self buttonWithSymbol:@"forward.end.fill" size:22.0
+    UIButton *next = [self buttonWithSymbol:@"forward.end.fill" size:26.0
                                       action:@selector(nextItem)];
-    UIButton *forward = [self buttonWithSymbol:@"goforward.10" size:22.0
-                                         action:@selector(skipForward)];
     UIStackView *center = [[UIStackView alloc] initWithArrangedSubviews:@[
-        back, previous, self.playButton, next, forward
+        previous, self.playButton, next
     ]];
     center.axis = UILayoutConstraintAxisHorizontal;
     center.alignment = UIStackViewAlignmentCenter;
-    center.distribution = UIStackViewDistributionEqualSpacing;
+    center.spacing = 56.0;
     center.translatesAutoresizingMaskIntoConstraints = NO;
-    for (UIButton *button in @[back, previous, next, forward]) {
-        [button.widthAnchor constraintEqualToConstant:46.0].active = YES;
-        [button.heightAnchor constraintEqualToConstant:46.0].active = YES;
+    for (UIButton *button in @[previous, next]) {
+        [button.widthAnchor constraintEqualToConstant:56.0].active = YES;
+        [button.heightAnchor constraintEqualToConstant:56.0].active = YES;
     }
-    [self.playButton.widthAnchor constraintEqualToConstant:78.0].active = YES;
-    [self.playButton.heightAnchor constraintEqualToConstant:78.0].active = YES;
+    [self.playButton.widthAnchor constraintEqualToConstant:76.0].active = YES;
+    [self.playButton.heightAnchor constraintEqualToConstant:76.0].active = YES;
+    self.playButton.backgroundColor = [UIColor colorWithWhite:0.0 alpha:0.35];
+    self.playButton.layer.cornerRadius = 38.0;
     [self.controlsView addSubview:center];
 
-    self.elapsedLabel = [self timeLabel];
-    self.durationLabel = [self timeLabel];
-    self.durationLabel.textAlignment = NSTextAlignmentRight;
-    self.slider = [UISlider new];
-    self.slider.minimumTrackTintColor = UIColor.whiteColor;
-    self.slider.maximumTrackTintColor = [UIColor colorWithWhite:0.7 alpha:0.75];
+    self.timeLabel = [UILabel new];
+    self.timeLabel.textColor = UIColor.whiteColor;
+    self.timeLabel.font = [UIFont monospacedDigitSystemFontOfSize:13.0
+                                                           weight:UIFontWeightMedium];
+    self.timeLabel.translatesAutoresizingMaskIntoConstraints = NO;
+    self.repeatButton = [self buttonWithSymbol:@"repeat" size:18.0
+                                        action:@selector(toggleRepeat)];
+    self.aspectButton = [self buttonWithSymbol:@"arrow.up.left.and.arrow.down.right"
+                                          size:18.0 action:@selector(toggleAspect)];
+    UIStackView *bottomButtons = [[UIStackView alloc] initWithArrangedSubviews:@[
+        self.repeatButton, self.aspectButton
+    ]];
+    bottomButtons.axis = UILayoutConstraintAxisHorizontal;
+    bottomButtons.spacing = 4.0;
+    bottomButtons.translatesAutoresizingMaskIntoConstraints = NO;
+    for (UIButton *button in @[self.repeatButton, self.aspectButton]) {
+        [button.widthAnchor constraintEqualToConstant:40.0].active = YES;
+        [button.heightAnchor constraintEqualToConstant:40.0].active = YES;
+    }
+
+    UIColor *accent = UIColor.systemRedColor;
+    self.slider = [YTKACESegmentSlider new];
+    [self.slider setThumbImage:YTKACEScrubberThumb(13.0, accent) forState:UIControlStateNormal];
+    [self.slider setThumbImage:YTKACEScrubberThumb(20.0, accent)
+                      forState:UIControlStateHighlighted];
     self.slider.translatesAutoresizingMaskIntoConstraints = NO;
     [self.slider addTarget:self action:@selector(sliderStarted)
           forControlEvents:UIControlEventTouchDown];
@@ -855,30 +1495,9 @@ static void YTKACEStoreCompleted(NSURL *URL, NSTimeInterval duration,
     [self.slider addTarget:self action:@selector(sliderEnded)
           forControlEvents:UIControlEventTouchUpInside | UIControlEventTouchUpOutside |
                            UIControlEventTouchCancel];
-    UIButton *aspect = [self buttonWithSymbol:@"arrow.up.left.and.arrow.down.right" size:22.0
-                                        action:@selector(toggleAspect)];
-    self.repeatButton = [self buttonWithSymbol:@"repeat" size:24.0
-                                        action:@selector(toggleRepeat)];
-    [aspect.widthAnchor constraintEqualToConstant:44.0].active = YES;
-    [aspect.heightAnchor constraintEqualToConstant:44.0].active = YES;
-    [self.repeatButton.widthAnchor constraintEqualToConstant:44.0].active = YES;
-    [self.repeatButton.heightAnchor constraintEqualToConstant:44.0].active = YES;
-    self.subtitlesEnabled = ![NSUserDefaults.standardUserDefaults
-        boolForKey:@"YTKACE.Preference.Downloads.SubtitlesHidden"];
-    self.captionButton = [self buttonWithSymbol:@"captions.bubble"
-                                           size:24.0
-                                         action:@selector(toggleSubtitles)];
-    [self.captionButton.widthAnchor constraintEqualToConstant:44.0].active = YES;
-    [self.captionButton.heightAnchor constraintEqualToConstant:44.0].active = YES;
-    UIStackView *bottomButtons = [[UIStackView alloc] initWithArrangedSubviews:@[
-        aspect, [UIView new], self.captionButton, self.repeatButton
-    ]];
-    bottomButtons.axis = UILayoutConstraintAxisHorizontal;
-    bottomButtons.translatesAutoresizingMaskIntoConstraints = NO;
-    [self.controlsView addSubview:self.slider];
-    [self.controlsView addSubview:self.elapsedLabel];
-    [self.controlsView addSubview:self.durationLabel];
+    [self.controlsView addSubview:self.timeLabel];
     [self.controlsView addSubview:bottomButtons];
+    [self.controlsView addSubview:self.slider];
 
     self.subtitleLabel = [UILabel new];
     self.subtitleLabel.backgroundColor = [UIColor colorWithWhite:0.0 alpha:0.72];
@@ -892,10 +1511,34 @@ static void YTKACEStoreCompleted(NSURL *URL, NSTimeInterval duration,
     self.subtitleLabel.translatesAutoresizingMaskIntoConstraints = NO;
     [self.view addSubview:self.subtitleLabel];
 
+    self.seekIndicator = [UILabel new];
+    self.seekIndicator.textColor = UIColor.whiteColor;
+    self.seekIndicator.font = [UIFont systemFontOfSize:15.0 weight:UIFontWeightSemibold];
+    self.seekIndicator.textAlignment = NSTextAlignmentCenter;
+    self.seekIndicator.backgroundColor = [UIColor colorWithWhite:0.0 alpha:0.45];
+    self.seekIndicator.layer.cornerRadius = 22.0;
+    self.seekIndicator.layer.masksToBounds = YES;
+    self.seekIndicator.alpha = 0.0;
+    self.seekIndicator.userInteractionEnabled = NO;
+    self.seekIndicator.translatesAutoresizingMaskIntoConstraints = NO;
+    [self.view addSubview:self.seekIndicator];
+
+    self.skipButton = [UIButton buttonWithType:UIButtonTypeSystem];
+    self.skipButton.backgroundColor = [UIColor colorWithWhite:0.08 alpha:0.9];
+    self.skipButton.layer.cornerRadius = 18.0;
+    self.skipButton.layer.borderWidth = 1.0;
+    self.skipButton.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.25].CGColor;
+    self.skipButton.titleLabel.font = [UIFont systemFontOfSize:14.0 weight:UIFontWeightSemibold];
+    [self.skipButton setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
+    self.skipButton.hidden = YES;
+    self.skipButton.translatesAutoresizingMaskIntoConstraints = NO;
+    [self.skipButton addTarget:self action:@selector(skipPromptedSegment)
+              forControlEvents:UIControlEventTouchUpInside];
+    [self.view addSubview:self.skipButton];
+
     UILayoutGuide *safe = self.controlsView.safeAreaLayoutGuide;
-    NSLayoutConstraint *centerWidth = [center.widthAnchor
-        constraintEqualToAnchor:self.controlsView.widthAnchor multiplier:0.84];
-    centerWidth.priority = UILayoutPriorityDefaultHigh;
+    self.seekIndicatorX = [self.seekIndicator.centerXAnchor
+        constraintEqualToAnchor:self.view.leadingAnchor];
     [NSLayoutConstraint activateConstraints:@[
         [self.playerSurface.topAnchor constraintEqualToAnchor:self.view.topAnchor],
         [self.playerSurface.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor],
@@ -905,40 +1548,39 @@ static void YTKACEStoreCompleted(NSURL *URL, NSTimeInterval duration,
         [self.controlsView.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor],
         [self.controlsView.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor],
         [self.controlsView.bottomAnchor constraintEqualToAnchor:self.view.bottomAnchor],
-        [top.topAnchor constraintEqualToAnchor:safe.topAnchor constant:12.0],
-        [top.leadingAnchor constraintEqualToAnchor:safe.leadingAnchor constant:14.0],
-        [top.trailingAnchor constraintEqualToAnchor:safe.trailingAnchor constant:-14.0],
+        [top.topAnchor constraintEqualToAnchor:safe.topAnchor constant:6.0],
+        [top.leadingAnchor constraintEqualToAnchor:safe.leadingAnchor constant:8.0],
+        [top.trailingAnchor constraintEqualToAnchor:safe.trailingAnchor constant:-8.0],
         [center.centerXAnchor constraintEqualToAnchor:self.controlsView.centerXAnchor],
         [center.centerYAnchor constraintEqualToAnchor:self.controlsView.centerYAnchor],
-        [center.widthAnchor constraintLessThanOrEqualToConstant:540.0],
-        centerWidth,
-        [self.slider.leadingAnchor constraintEqualToAnchor:safe.leadingAnchor constant:28.0],
-        [self.slider.trailingAnchor constraintEqualToAnchor:safe.trailingAnchor constant:-28.0],
-        [self.slider.bottomAnchor constraintEqualToAnchor:safe.bottomAnchor constant:-70.0],
-        [self.elapsedLabel.leadingAnchor constraintEqualToAnchor:self.slider.leadingAnchor],
-        [self.elapsedLabel.bottomAnchor constraintEqualToAnchor:self.slider.topAnchor constant:-4.0],
-        [self.durationLabel.trailingAnchor constraintEqualToAnchor:self.slider.trailingAnchor],
-        [self.durationLabel.bottomAnchor constraintEqualToAnchor:self.slider.topAnchor constant:-4.0],
-        [bottomButtons.leadingAnchor constraintEqualToAnchor:self.slider.leadingAnchor],
-        [bottomButtons.trailingAnchor constraintEqualToAnchor:self.slider.trailingAnchor],
-        [bottomButtons.topAnchor constraintEqualToAnchor:self.slider.bottomAnchor constant:13.0],
-        [bottomButtons.heightAnchor constraintEqualToConstant:38.0],
+        [self.slider.leadingAnchor constraintEqualToAnchor:safe.leadingAnchor constant:16.0],
+        [self.slider.trailingAnchor constraintEqualToAnchor:safe.trailingAnchor constant:-16.0],
+        [self.slider.bottomAnchor constraintEqualToAnchor:safe.bottomAnchor constant:-10.0],
+        [self.slider.heightAnchor constraintEqualToConstant:30.0],
+        [self.timeLabel.leadingAnchor constraintEqualToAnchor:self.slider.leadingAnchor],
+        [self.timeLabel.centerYAnchor constraintEqualToAnchor:bottomButtons.centerYAnchor],
+        [bottomButtons.trailingAnchor constraintEqualToAnchor:self.slider.trailingAnchor
+                                                     constant:6.0],
+        [bottomButtons.bottomAnchor constraintEqualToAnchor:self.slider.topAnchor],
+        [self.skipButton.trailingAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.trailingAnchor
+                                                       constant:-18.0],
+        [self.skipButton.bottomAnchor constraintEqualToAnchor:self.slider.topAnchor
+                                                     constant:-52.0],
+        [self.skipButton.heightAnchor constraintEqualToConstant:36.0],
+        [self.skipButton.widthAnchor constraintEqualToAnchor:self.skipButton.titleLabel.widthAnchor
+                                                    constant:32.0],
         [self.subtitleLabel.centerXAnchor constraintEqualToAnchor:self.view.centerXAnchor],
         [self.subtitleLabel.leadingAnchor constraintGreaterThanOrEqualToAnchor:safe.leadingAnchor
                                                                       constant:30.0],
         [self.subtitleLabel.trailingAnchor constraintLessThanOrEqualToAnchor:safe.trailingAnchor
                                                                        constant:-30.0],
         [self.subtitleLabel.bottomAnchor constraintEqualToAnchor:self.slider.topAnchor
-                                                         constant:-32.0]
+                                                         constant:-48.0],
+        self.seekIndicatorX,
+        [self.seekIndicator.centerYAnchor constraintEqualToAnchor:self.view.centerYAnchor],
+        [self.seekIndicator.heightAnchor constraintEqualToConstant:44.0],
+        [self.seekIndicator.widthAnchor constraintEqualToConstant:112.0]
     ]];
-}
-
-- (UILabel *)timeLabel {
-    UILabel *label = [UILabel new];
-    label.textColor = UIColor.whiteColor;
-    label.font = [UIFont monospacedDigitSystemFontOfSize:13.0 weight:UIFontWeightRegular];
-    label.translatesAutoresizingMaskIntoConstraints = NO;
-    return label;
 }
 
 - (void)buildOptions {
@@ -1049,6 +1691,24 @@ static void YTKACEStoreCompleted(NSURL *URL, NSTimeInterval duration,
     [NSNotificationCenter.defaultCenter addObserver:self
         selector:@selector(playbackChanged:)
         name:YTKACEDownloadPlaybackDidChangeNotification object:self.session];
+    [NSNotificationCenter.defaultCenter addObserver:self
+        selector:@selector(sponsorPromptChanged:)
+        name:YTKACEDownloadSponsorPromptNotification object:self.session];
+    [NSNotificationCenter.defaultCenter addObserver:self
+        selector:@selector(sponsorSkipped:)
+        name:YTKACEDownloadSponsorDidSkipNotification object:self.session];
+    [NSNotificationCenter.defaultCenter addObserver:self
+        selector:@selector(pictureInPictureChanged:)
+        name:YTKACELibraryPiPDidChangeNotification object:nil];
+    [NSNotificationCenter.defaultCenter addObserver:self
+        selector:@selector(downloadInfoChanged:)
+        name:YTKACEDownloadInfoDidChangeNotification object:nil];
+}
+
+- (void)downloadInfoChanged:(NSNotification *)notification {
+    (void)notification;
+    self.channelMediaPath = nil;
+    [self refreshControls];
 }
 
 - (void)playbackChanged:(NSNotification *)notification {
@@ -1059,14 +1719,20 @@ static void YTKACEStoreCompleted(NSURL *URL, NSTimeInterval duration,
 - (void)refreshControls {
     NSURL *currentURL = self.session.currentURL;
     self.titleLabel.text = currentURL.lastPathComponent.stringByDeletingPathExtension;
+    if (![self.channelMediaPath isEqualToString:currentURL.path]) {
+        self.channelMediaPath = currentURL.path;
+        self.channelLabel.text = currentURL == nil ? nil : YTKACEStoredChannelName(currentURL);
+        self.channelLabel.hidden = self.channelLabel.text.length == 0;
+    }
     if (![self.subtitleMediaPath isEqualToString:currentURL.path]) {
         self.subtitleMediaPath = currentURL.path;
-        NSArray<YTKACESubtitleCue *> *loaded =
-            currentURL == nil ? @[] : YTKACEReadSubtitles(currentURL);
-        if (loaded.count == 0 && currentURL != nil) {
-            loaded = YTKACEReadEmbeddedSubtitles(currentURL);
-        }
-        self.subtitleCues = loaded;
+        self.subtitleCues = currentURL == nil ? @[] : YTKACEReadSubtitles(currentURL);
+        self.subtitlesEnabled = NO;
+        self.captionGroup = nil;
+        self.captionChoices = @[];
+        self.captionTitles = @[];
+        self.captionIndex = 0;
+        if (currentURL != nil) [self loadCaptionsForURL:currentURL];
     }
     NSTimeInterval elapsed = CMTimeGetSeconds(self.session.player.currentTime);
     NSTimeInterval duration = CMTimeGetSeconds(self.session.player.currentItem.duration);
@@ -1075,15 +1741,18 @@ static void YTKACEStoreCompleted(NSURL *URL, NSTimeInterval duration,
         self.slider.maximumValue = isfinite(duration) && duration > 0.0
             ? (float)duration : 1.0f;
         self.slider.value = isfinite(elapsed) ? (float)elapsed : 0.0f;
+        self.timeLabel.text = [NSString stringWithFormat:@"%@ / %@",
+            YTKACEPlayerTimeText(elapsed), YTKACEPlayerTimeText(duration)];
     }
-    self.elapsedLabel.text = YTKACEPlayerTimeText(elapsed);
-    self.durationLabel.text = YTKACEPlayerTimeText(duration);
+    [self.slider setSegments:self.session.sponsorSegments duration:duration];
     NSString *playSymbol = self.session.player.rate == 0.0f ? @"play.fill" : @"pause.fill";
-    [self.playButton setImage:[UIImage systemImageNamed:playSymbol] forState:UIControlStateNormal];
+    [self setSymbol:playSymbol size:40.0 forButton:self.playButton];
     self.repeatButton.tintColor = self.session.repeatEnabled
         ? UIColor.systemRedColor : UIColor.whiteColor;
-    self.captionButton.hidden = self.subtitleCues.count == 0;
-    self.captionButton.tintColor = self.subtitlesEnabled
+    self.pipButton.tintColor = [YTKACELibraryPiP sharedPiP].automatic
+        ? UIColor.systemRedColor : UIColor.whiteColor;
+    self.captionButton.hidden = self.captionChoices.count <= 1;
+    self.captionButton.tintColor = self.captionIndex != 0
         ? UIColor.systemRedColor : UIColor.whiteColor;
     self.speedDetail.text = [NSString stringWithFormat:@"· %.2gx", self.session.playbackRate];
     if (self.session.pauseAtEnd) {
@@ -1109,19 +1778,111 @@ static void YTKACEStoreCompleted(NSURL *URL, NSTimeInterval duration,
 }
 
 - (void)togglePlayback { [self.session togglePlayback]; [self scheduleControlsHide]; }
-- (void)skipBack { [self.session seekBy:-10.0]; [self scheduleControlsHide]; }
-- (void)skipForward { [self.session seekBy:10.0]; [self scheduleControlsHide]; }
 - (void)previousItem { [self.session playPrevious]; [self scheduleControlsHide]; }
 - (void)nextItem { [self.session playNext]; [self hideOptions]; [self scheduleControlsHide]; }
 
-- (void)toggleSubtitles {
-    self.subtitlesEnabled = !self.subtitlesEnabled;
-    [NSUserDefaults.standardUserDefaults
-        setBool:!self.subtitlesEnabled
-         forKey:@"YTKACE.Preference.Downloads.SubtitlesHidden"];
-    self.captionButton.tintColor = self.subtitlesEnabled
-        ? UIColor.systemRedColor : UIColor.whiteColor;
+- (void)handleDoubleTap:(UITapGestureRecognizer *)gesture {
+    if (!self.optionsView.hidden) return;
+    CGFloat width = CGRectGetWidth(self.view.bounds);
+    CGFloat x = [gesture locationInView:self.view].x;
+    NSInteger direction = x < width / 3.0 ? -1 : (x > width * 2.0 / 3.0 ? 1 : 0);
+    if (direction == 0) {
+        [self togglePlayback];
+        return;
+    }
+    if (self.seekTotal != 0 && (self.seekTotal > 0) != (direction > 0)) self.seekTotal = 0;
+    self.seekTotal += direction * 10;
+    [self.session seekBy:direction * 10.0];
+    self.seekIndicator.text = direction > 0
+        ? [NSString stringWithFormat:@"+%lds  »", (long)self.seekTotal]
+        : [NSString stringWithFormat:@"«  %lds", (long)self.seekTotal];
+    self.seekIndicatorX.constant = direction > 0 ? width * 0.8 : width * 0.2;
+    [self.view layoutIfNeeded];
+    self.seekIndicator.alpha = 1.0;
+    [self.seekIndicatorTimer invalidate];
+    __weak YTKACEDownloadPlayerController *weakSelf = self;
+    self.seekIndicatorTimer = [NSTimer scheduledTimerWithTimeInterval:0.9 repeats:NO
+        block:^(__unused NSTimer *timer) {
+            weakSelf.seekTotal = 0;
+            [UIView animateWithDuration:0.2 animations:^{
+                weakSelf.seekIndicator.alpha = 0.0;
+            }];
+        }];
+}
+
+- (void)loadCaptionsForURL:(NSURL *)URL {
+    AVPlayerItem *item = self.session.player.currentItem;
+    AVAsset *asset = item.asset;
+    NSString *key = @"availableMediaCharacteristicsWithMediaSelectionOptions";
+    __weak YTKACEDownloadPlayerController *weakSelf = self;
+    [asset loadValuesAsynchronouslyForKeys:@[key] completionHandler:^{
+        dispatch_async(dispatch_get_main_queue(), ^{
+            YTKACEDownloadPlayerController *strongSelf = weakSelf;
+            if (strongSelf == nil || ![strongSelf.session.currentURL isEqual:URL]) return;
+            AVMediaSelectionGroup *group =
+                [asset mediaSelectionGroupForMediaCharacteristic:AVMediaCharacteristicLegible];
+            NSMutableArray *choices = [NSMutableArray arrayWithObject:NSNull.null];
+            NSMutableArray<NSString *> *titles =
+                [NSMutableArray arrayWithObject:YTKACELocalized(@"Off")];
+            NSUInteger preferred = 0;
+            if (strongSelf.subtitleCues.count != 0) {
+                [choices addObject:@"file"];
+                [titles addObject:YTKACELocalized(@"Captions")];
+                preferred = 1;
+            }
+            NSUInteger fileTracks = [asset tracksWithMediaType:AVMediaTypeSubtitle].count +
+                [asset tracksWithMediaType:AVMediaTypeText].count;
+            for (AVMediaSelectionOption *option in group.options) {
+                if ([option hasMediaCharacteristic:AVMediaCharacteristicContainsOnlyForcedSubtitles]) {
+                    continue;
+                }
+                if (preferred == 0 && fileTracks != 0) preferred = choices.count;
+                [choices addObject:option];
+                NSString *name = option.displayName;
+                if (name.length == 0 && option.extendedLanguageTag.length != 0) {
+                    name = [NSLocale.currentLocale
+                        localizedStringForLanguageCode:option.extendedLanguageTag];
+                }
+                [titles addObject:name.length != 0 ? name : YTKACELocalized(@"Captions")];
+            }
+            YTKACEDownloadLog(@"subs", @"player captions file=%lu tracks=%lu [%@]",
+                (unsigned long)strongSelf.subtitleCues.count, (unsigned long)fileTracks,
+                [titles componentsJoinedByString:@", "]);
+            strongSelf.captionGroup = group;
+            strongSelf.captionChoices = choices;
+            strongSelf.captionTitles = titles;
+            BOOL hidden = [NSUserDefaults.standardUserDefaults
+                boolForKey:@"YTKACE.Preference.Downloads.SubtitlesHidden"];
+            [strongSelf selectCaptionIndex:hidden ? 0 : preferred];
+        });
+    }];
+}
+
+- (void)selectCaptionIndex:(NSUInteger)index {
+    if (index >= self.captionChoices.count) index = 0;
+    self.captionIndex = index;
+    id choice = self.captionChoices.count != 0 ? self.captionChoices[index] : NSNull.null;
+    AVPlayerItem *item = self.session.player.currentItem;
+    if (self.captionGroup != nil) {
+        [item selectMediaOption:[choice isKindOfClass:AVMediaSelectionOption.class] ? choice : nil
+          inMediaSelectionGroup:self.captionGroup];
+    }
+    self.subtitlesEnabled = [choice isEqual:@"file"];
     if (!self.subtitlesEnabled) self.subtitleLabel.hidden = YES;
+    [self refreshControls];
+}
+
+- (void)toggleSubtitles {
+    if (self.captionChoices.count <= 1) return;
+    [self.hideTimer invalidate];
+    __weak YTKACEDownloadPlayerController *weakSelf = self;
+    YTKACEPresentSelectionMenu(self, self.captionButton, YTKACELocalized(@"Captions"),
+        self.captionTitles, self.captionIndex, ^(NSUInteger index) {
+            [NSUserDefaults.standardUserDefaults setBool:index == 0
+                forKey:@"YTKACE.Preference.Downloads.SubtitlesHidden"];
+            [weakSelf selectCaptionIndex:index];
+            [weakSelf scheduleControlsHide];
+        });
 }
 
 - (void)toggleRepeat {
@@ -1134,15 +1895,139 @@ static void YTKACEStoreCompleted(NSURL *URL, NSTimeInterval duration,
     self.aspectFill = !self.aspectFill;
     self.playerSurface.playerLayer.videoGravity = self.aspectFill
         ? AVLayerVideoGravityResizeAspectFill : AVLayerVideoGravityResizeAspect;
+    [self setSymbol:self.aspectFill ? @"arrow.down.right.and.arrow.up.left"
+                                    : @"arrow.up.left.and.arrow.down.right"
+               size:18.0 forButton:self.aspectButton];
     [self scheduleControlsHide];
 }
 
+- (void)toggleAutoPictureInPicture {
+    YTKACELibraryPiP *pip = [YTKACELibraryPiP sharedPiP];
+    pip.automatic = !pip.automatic;
+    [pip useLayer:self.playerSurface.playerLayer owner:self.playerSurface];
+    [self showHUD:[NSString stringWithFormat:@"%@ %@", YTKACELocalized(@"Picture in Picture"),
+        pip.automatic ? YTKACELocalized(@"· On") : YTKACELocalized(@"· Off")]];
+    [self refreshControls];
+    [self scheduleControlsHide];
+}
+
+- (void)showHUD:(NSString *)text {
+    UILabel *hud = [UILabel new];
+    hud.text = [NSString stringWithFormat:@"   %@   ", text];
+    hud.textColor = UIColor.whiteColor;
+    hud.font = [UIFont systemFontOfSize:14.0 weight:UIFontWeightSemibold];
+    hud.backgroundColor = [UIColor colorWithWhite:0.08 alpha:0.9];
+    hud.layer.cornerRadius = 16.0;
+    hud.layer.masksToBounds = YES;
+    hud.translatesAutoresizingMaskIntoConstraints = NO;
+    [self.view addSubview:hud];
+    [NSLayoutConstraint activateConstraints:@[
+        [hud.centerXAnchor constraintEqualToAnchor:self.view.centerXAnchor],
+        [hud.topAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.topAnchor
+                                      constant:64.0],
+        [hud.heightAnchor constraintEqualToConstant:32.0]
+    ]];
+    [UIView animateWithDuration:0.25 delay:1.4 options:0 animations:^{
+        hud.alpha = 0.0;
+    } completion:^(__unused BOOL finished) {
+        [hud removeFromSuperview];
+    }];
+}
+
+- (void)pictureInPictureChanged:(NSNotification *)notification {
+    (void)notification;
+    YTKACELibraryPiP *pip = [YTKACELibraryPiP sharedPiP];
+    if (pip.active) return;
+    if (self.view.window != nil) {
+        [pip useLayer:self.playerSurface.playerLayer owner:self.playerSurface];
+    }
+}
+
+- (void)sponsorPromptChanged:(NSNotification *)notification {
+    (void)notification;
+    NSDictionary<NSString *, id> *segment = self.session.promptedSegment;
+    if (segment != nil) {
+        [self.skipButton setTitle:[NSString stringWithFormat:@"%@ %@",
+            YTKACELocalized(@"Skip"), YTKACELibrarySponsorTitle(segment[@"category"])]
+                         forState:UIControlStateNormal];
+    }
+    self.skipButton.hidden = segment == nil;
+}
+
+- (void)skipPromptedSegment {
+    NSDictionary<NSString *, id> *segment = self.session.promptedSegment;
+    if (segment != nil) [self.session skipSegment:segment];
+}
+
+- (void)sponsorSkipped:(NSNotification *)notification {
+    NSDictionary<NSString *, id> *segment = notification.userInfo[@"segment"];
+    NSInteger mode = YTKACESponsorNotificationMode();
+    if (segment == nil || mode == 2) return;
+    [self.skippedBanner removeFromSuperview];
+    self.skippedStart = [segment[@"start"] doubleValue];
+    UIView *banner = [UIView new];
+    banner.backgroundColor = [UIColor colorWithWhite:0.08 alpha:0.94];
+    banner.layer.cornerRadius = 12.0;
+    banner.translatesAutoresizingMaskIntoConstraints = NO;
+    UILabel *label = [UILabel new];
+    label.text = [NSString stringWithFormat:@"%@ %@",
+        YTKACELibrarySponsorTitle(segment[@"category"]), YTKACELocalized(@"segment skipped")];
+    label.textColor = UIColor.whiteColor;
+    label.font = [UIFont systemFontOfSize:14.0 weight:UIFontWeightSemibold];
+    NSMutableArray<UIView *> *views = [NSMutableArray arrayWithObject:label];
+    if (mode == 0) {
+        UIButton *undo = [UIButton buttonWithType:UIButtonTypeSystem];
+        [undo setTitle:YTKACELocalized(@"Unskip") forState:UIControlStateNormal];
+        [undo setTitleColor:YTKACEAccentColor() forState:UIControlStateNormal];
+        undo.titleLabel.font = [UIFont systemFontOfSize:14.0 weight:UIFontWeightSemibold];
+        [undo addTarget:self action:@selector(unskipSegment)
+       forControlEvents:UIControlEventTouchUpInside];
+        [views addObject:undo];
+    }
+    UIStackView *content = [[UIStackView alloc] initWithArrangedSubviews:views];
+    content.axis = UILayoutConstraintAxisHorizontal;
+    content.alignment = UIStackViewAlignmentCenter;
+    content.spacing = 18.0;
+    content.translatesAutoresizingMaskIntoConstraints = NO;
+    [banner addSubview:content];
+    [self.view addSubview:banner];
+    [NSLayoutConstraint activateConstraints:@[
+        [banner.centerXAnchor constraintEqualToAnchor:self.view.centerXAnchor],
+        [banner.bottomAnchor constraintEqualToAnchor:self.slider.topAnchor constant:-52.0],
+        [content.topAnchor constraintEqualToAnchor:banner.topAnchor constant:10.0],
+        [content.leadingAnchor constraintEqualToAnchor:banner.leadingAnchor constant:16.0],
+        [content.trailingAnchor constraintEqualToAnchor:banner.trailingAnchor constant:-12.0],
+        [content.bottomAnchor constraintEqualToAnchor:banner.bottomAnchor constant:-10.0]
+    ]];
+    self.skippedBanner = banner;
+    NSTimeInterval duration = mode == 0
+        ? YTKACESponsorUnskipAlertDuration() : YTKACESponsorSkipAlertDuration();
+    __weak YTKACEDownloadPlayerController *weakSelf = self;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(duration * NSEC_PER_SEC)),
+        dispatch_get_main_queue(), ^{
+            if (weakSelf.skippedBanner == banner) {
+                [banner removeFromSuperview];
+                weakSelf.skippedBanner = nil;
+            }
+        });
+}
+
+- (void)unskipSegment {
+    [self.session seekToTime:self.skippedStart];
+    [self.skippedBanner removeFromSuperview];
+    self.skippedBanner = nil;
+}
+
 - (void)sliderStarted { self.scrubbing = YES; [self.hideTimer invalidate]; }
-- (void)sliderChanged { self.elapsedLabel.text = YTKACEPlayerTimeText(self.slider.value); }
+- (void)sliderChanged {
+    [self.slider updateProgress];
+    NSTimeInterval duration = CMTimeGetSeconds(self.session.player.currentItem.duration);
+    self.timeLabel.text = [NSString stringWithFormat:@"%@ / %@",
+        YTKACEPlayerTimeText(self.slider.value), YTKACEPlayerTimeText(duration)];
+}
 - (void)sliderEnded {
     self.scrubbing = NO;
-    [self.session.player seekToTime:CMTimeMakeWithSeconds(self.slider.value, 600)
-        toleranceBefore:kCMTimeZero toleranceAfter:kCMTimeZero];
+    [self.session seekToTime:self.slider.value];
     [self scheduleControlsHide];
 }
 
@@ -1191,9 +2076,15 @@ static void YTKACEStoreCompleted(NSURL *URL, NSTimeInterval duration,
 
 - (BOOL)gestureRecognizer:(UIGestureRecognizer *)gestureRecognizer
        shouldReceiveTouch:(UITouch *)touch {
-    if (gestureRecognizer.view == self.optionsView &&
-        [touch.view isDescendantOfView:self.optionsCard]) {
-        return NO;
+    if (gestureRecognizer.view == self.optionsView) {
+        return ![touch.view isDescendantOfView:self.optionsCard];
+    }
+    return ![touch.view isKindOfClass:UIControl.class];
+}
+
+- (BOOL)gestureRecognizerShouldBegin:(UIGestureRecognizer *)gestureRecognizer {
+    if ([gestureRecognizer isKindOfClass:UIPanGestureRecognizer.class]) {
+        return self.session.gesturesEnabled && self.optionsView.hidden;
     }
     return YES;
 }
@@ -1267,7 +2158,7 @@ static void YTKACEStoreCompleted(NSURL *URL, NSTimeInterval duration,
     if (!self.session.gesturesEnabled || !self.optionsView.hidden) {
         return;
     }
-    CGPoint translation = [gesture translationInView:self.controlsView];
+    CGPoint translation = [gesture translationInView:self.view];
     if (gesture.state == UIGestureRecognizerStateBegan) {
         self.panStart = translation;
         [self.hideTimer invalidate];
@@ -1308,7 +2199,7 @@ static void YTKACEStoreCompleted(NSURL *URL, NSTimeInterval duration,
 
 - (void)minimizePlayer {
     dispatch_block_t handler = self.minimizeHandler;
-    self.playerSurface.player = nil;
+    self.minimizing = YES;
     [self dismissViewControllerAnimated:YES completion:handler];
 }
 
