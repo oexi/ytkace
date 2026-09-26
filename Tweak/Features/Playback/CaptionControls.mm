@@ -14,7 +14,7 @@ static IMP OriginalSetCaptionError;
 static IMP OriginalSetLocalCaptionTrack;
 static IMP OriginalSetMDXCaptionTrack;
 static BOOL YTKACEHasRememberedSource;
-static NSMutableSet<NSString *> *YTKACEAppliedKeys;
+static char YTKACEAppliedCaptionAssociation;
 static NSMutableDictionary<NSString *, NSNumber *> *YTKACERestoredAt;
 static const NSTimeInterval YTKACERestoreWindow = 4.0;
 static NSMutableSet<NSString *> *YTKACEFailedKeys;
@@ -218,10 +218,12 @@ void YTKACEApplyPreferredCaptionLanguage(id player) {
     }
     NSString *appliedKey = videoID.length != 0
         ? [NSString stringWithFormat:@"%@|%@", videoID, preferred] : nil;
-    if (YTKACEAppliedKeys == nil) {
-        YTKACEAppliedKeys = [NSMutableSet set];
-    }
-    if (appliedKey != nil && [YTKACEAppliedKeys containsObject:appliedKey]) {
+    id session = video ?: player;
+    NSString *sessionKey = appliedKey != nil
+        ? [NSString stringWithFormat:@"%p|%@", player, appliedKey] : nil;
+    NSString *sessionApplied =
+        objc_getAssociatedObject(session, &YTKACEAppliedCaptionAssociation);
+    if (sessionKey != nil && [sessionApplied isEqualToString:sessionKey]) {
         return;
     }
     if (YTKACECaptionKeyFailed(appliedKey)) {
@@ -285,10 +287,8 @@ void YTKACEApplyPreferredCaptionLanguage(id player) {
     SEL setter = NSSelectorFromString(@"setActiveCaptionTrack:source:");
     if (![player respondsToSelector:setter]) return;
     if (appliedKey != nil) {
-        if (YTKACEAppliedKeys.count >= 64) {
-            [YTKACEAppliedKeys removeAllObjects];
-        }
-        [YTKACEAppliedKeys addObject:appliedKey];
+        objc_setAssociatedObject(session, &YTKACEAppliedCaptionAssociation,
+                                 sessionKey, OBJC_ASSOCIATION_COPY_NONATOMIC);
         YTKACELastAppliedKey = appliedKey;
     }
     const long long applySource = 3;
