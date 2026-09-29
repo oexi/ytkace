@@ -1,12 +1,31 @@
 #import "YTKACEAudioPlayerController.h"
+#import "../../YTKACE.h"
 #import "YTKACEDownloadPlayerController.h"
 #import "MediaArtwork.h"
 #import "DownloadSponsor.h"
 #import "../../Settings/YTKACESettingsPages.h"
 #import "../../Runtime/Preferences.h"
 #import "../../Runtime/Localization.h"
+#import "../../UI/OverlayButtonHost.h"
 
 #import <AVFoundation/AVFoundation.h>
+
+static void YTKACEStyleAudioSlider(UISlider *slider) {
+    UIImage *fill = [YTKACEProgressFillImage(240.0, 4.0) resizableImageWithCapInsets:UIEdgeInsetsZero
+                                                                         resizingMode:UIImageResizingModeStretch];
+    [slider setMinimumTrackImage:fill forState:UIControlStateNormal];
+    UIColor *tint = YTKACEProgressScrubberTint();
+    for (NSNumber *size in @[@14.0, @22.0]) {
+        CGFloat diameter = size.doubleValue;
+        UIGraphicsImageRenderer *renderer = [[UIGraphicsImageRenderer alloc]
+            initWithSize:CGSizeMake(diameter, diameter)];
+        UIImage *thumb = [renderer imageWithActions:^(__unused UIGraphicsImageRendererContext *context) {
+            [tint setFill];
+            [[UIBezierPath bezierPathWithOvalInRect:CGRectMake(0.0, 0.0, diameter, diameter)] fill];
+        }];
+        [slider setThumbImage:thumb forState:diameter < 20.0 ? UIControlStateNormal : UIControlStateHighlighted];
+    }
+}
 
 static NSString *YTKACEAudioTime(NSTimeInterval value) {
     if (!isfinite(value) || value < 0.0) return @"0:00";
@@ -14,6 +33,106 @@ static NSString *YTKACEAudioTime(NSTimeInterval value) {
     return [NSString stringWithFormat:@"%ld:%02ld",
         (long)(seconds / 60), (long)(seconds % 60)];
 }
+
+static NSCache *YTKACEQueueInfoCache(void) {
+    static NSCache *cache;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        cache = [NSCache new];
+        cache.countLimit = 400;
+    });
+    return cache;
+}
+
+static void YTKACELoadQueueInfo(NSURL *URL, void (^completion)(NSDictionary *info)) {
+    static NSMutableDictionary<NSString *, NSMutableArray *> *pending;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ pending = [NSMutableDictionary dictionary]; });
+    NSString *key = URL.path;
+    NSMutableArray *waiting = pending[key];
+    if (waiting != nil) {
+        [waiting addObject:[completion copy]];
+        return;
+    }
+    pending[key] = [NSMutableArray arrayWithObject:[completion copy]];
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        NSMutableDictionary *info = [NSMutableDictionary dictionary];
+        UIImage *artwork = YTKACEMediaArtworkImage(URL);
+        if (artwork != nil && artwork.size.width > 0.0 && artwork.size.height > 0.0) {
+            CGFloat side = 44.0;
+            UIGraphicsImageRenderer *renderer = [[UIGraphicsImageRenderer alloc]
+                initWithSize:CGSizeMake(side, side)];
+            info[@"thumb"] = [renderer imageWithActions:^(__unused UIGraphicsImageRendererContext *context) {
+                CGSize size = artwork.size;
+                CGFloat scale = MAX(side / size.width, side / size.height);
+                CGSize drawn = CGSizeMake(size.width * scale, size.height * scale);
+                [artwork drawInRect:CGRectMake((side - drawn.width) * 0.5, (side - drawn.height) * 0.5,
+                                               drawn.width, drawn.height)];
+            }];
+        }
+        NSTimeInterval duration = CMTimeGetSeconds([AVURLAsset URLAssetWithURL:URL options:nil].duration);
+        info[@"duration"] = @(isfinite(duration) && duration > 0.0 ? duration : 0.0);
+        NSString *channel = YTKACEStoredChannelName(URL);
+        if (channel.length != 0) info[@"channel"] = channel;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [YTKACEQueueInfoCache() setObject:info forKey:key];
+            NSArray *callbacks = pending[key];
+            [pending removeObjectForKey:key];
+            for (void (^callback)(NSDictionary *) in callbacks) callback(info);
+        });
+    });
+}
+
+@interface YTKACEQueueCell : UITableViewCell
+@property(nonatomic, strong) UIImageView *thumb;
+@property(nonatomic, strong) UILabel *title;
+@property(nonatomic, strong) UILabel *detail;
+@property(nonatomic, strong) UIImageView *playing;
+@property(nonatomic, copy) NSURL *URL;
+@end
+
+@implementation YTKACEQueueCell
+
+- (instancetype)initWithStyle:(UITableViewCellStyle)style reuseIdentifier:(NSString *)reuseIdentifier {
+    self = [super initWithStyle:style reuseIdentifier:reuseIdentifier];
+    if (self != nil) {
+        self.backgroundColor = UIColor.clearColor;
+        self.thumb = [UIImageView new];
+        self.thumb.contentMode = UIViewContentModeScaleAspectFill;
+        self.thumb.clipsToBounds = YES;
+        self.thumb.layer.cornerRadius = 6.0;
+        self.thumb.tintColor = UIColor.systemGrayColor;
+        self.title = [UILabel new];
+        self.title.font = [UIFont systemFontOfSize:14.0 weight:UIFontWeightSemibold];
+        self.detail = [UILabel new];
+        self.detail.font = [UIFont systemFontOfSize:12.0];
+        self.detail.textColor = UIColor.secondaryLabelColor;
+        self.playing = [[UIImageView alloc] initWithImage:[UIImage systemImageNamed:@"speaker.wave.2.fill"]];
+        self.playing.contentMode = UIViewContentModeScaleAspectFit;
+        UIStackView *labels = [[UIStackView alloc] initWithArrangedSubviews:@[self.title, self.detail]];
+        labels.axis = UILayoutConstraintAxisVertical;
+        labels.spacing = 2.0;
+        for (UIView *view in @[self.thumb, labels, self.playing]) {
+            view.translatesAutoresizingMaskIntoConstraints = NO;
+            [self.contentView addSubview:view];
+        }
+        [NSLayoutConstraint activateConstraints:@[
+            [self.thumb.leadingAnchor constraintEqualToAnchor:self.contentView.leadingAnchor constant:16.0],
+            [self.thumb.centerYAnchor constraintEqualToAnchor:self.contentView.centerYAnchor],
+            [self.thumb.widthAnchor constraintEqualToConstant:44.0],
+            [self.thumb.heightAnchor constraintEqualToConstant:44.0],
+            [labels.leadingAnchor constraintEqualToAnchor:self.thumb.trailingAnchor constant:12.0],
+            [labels.centerYAnchor constraintEqualToAnchor:self.contentView.centerYAnchor],
+            [self.playing.leadingAnchor constraintEqualToAnchor:labels.trailingAnchor constant:8.0],
+            [self.playing.trailingAnchor constraintEqualToAnchor:self.contentView.trailingAnchor constant:-6.0],
+            [self.playing.centerYAnchor constraintEqualToAnchor:self.contentView.centerYAnchor],
+            [self.playing.widthAnchor constraintEqualToConstant:18.0]
+        ]];
+    }
+    return self;
+}
+
+@end
 
 @interface YTKACEAudioPlayerController ()
     <UITableViewDataSource, UITableViewDelegate, UIGestureRecognizerDelegate>
@@ -27,9 +146,27 @@ static NSString *YTKACEAudioTime(NSTimeInterval value) {
 @property(nonatomic, strong) UISlider *slider;
 @property(nonatomic, strong) UIButton *playButton;
 @property(nonatomic, strong) UIButton *repeatButton;
+@property(nonatomic, strong) UIView *topBar;
+@property(nonatomic, strong) UIView *controlsView;
 @property(nonatomic, strong) UIView *queuePanel;
+@property(nonatomic, strong) UIView *queueHeader;
+@property(nonatomic, strong) UIView *grabber;
+@property(nonatomic, strong) UILabel *queueTitle;
+@property(nonatomic, strong) UILabel *queueSubtitle;
+@property(nonatomic, strong) UIView *miniRow;
+@property(nonatomic, strong) NSLayoutConstraint *miniHeight;
+@property(nonatomic, strong) UIImageView *miniArtwork;
+@property(nonatomic, strong) UILabel *miniTitle;
+@property(nonatomic, strong) UILabel *miniChannel;
+@property(nonatomic, strong) UIButton *miniPlay;
 @property(nonatomic, strong) UITableView *queueTable;
 @property(nonatomic, strong) NSLayoutConstraint *queueHeight;
+@property(nonatomic, assign) NSInteger queueState;
+@property(nonatomic, assign) BOOL draggingQueue;
+@property(nonatomic, assign) BOOL tableDrivesQueue;
+@property(nonatomic, assign) BOOL tablePanIgnored;
+@property(nonatomic, assign) CGFloat dragStartHeight;
+@property(nonatomic, assign) CGFloat dragBaseline;
 @property(nonatomic, strong) UIView *optionsView;
 @property(nonatomic, strong) UIView *optionsCard;
 @property(nonatomic, strong) UILabel *speedDetail;
@@ -37,9 +174,9 @@ static NSString *YTKACEAudioTime(NSTimeInterval value) {
 @property(nonatomic, strong) UILabel *autoplayDetail;
 @property(nonatomic, strong) NSTimer *sleepTimer;
 @property(nonatomic, strong) id timeObserver;
-@property(nonatomic, assign) BOOL queueOpen;
 @property(nonatomic, assign) BOOL scrubbing;
 @property(nonatomic, assign) NSInteger sleepMinutes;
+@property(nonatomic, copy) NSURL *artworkURL;
 @end
 
 @implementation YTKACEAudioPlayerController
@@ -48,6 +185,8 @@ static NSString *YTKACEAudioTime(NSTimeInterval value) {
     self.view.backgroundColor =
         YTKACEInterfaceBackgroundColor(self.traitCollection);
     self.queuePanel.backgroundColor =
+        YTKACEInterfaceSurfaceColor(self.traitCollection);
+    self.miniArtwork.backgroundColor =
         YTKACEInterfaceBackgroundColor(self.traitCollection);
     self.optionsCard.backgroundColor =
         YTKACEInterfaceSurfaceColor(self.traitCollection);
@@ -58,7 +197,7 @@ static NSString *YTKACEAudioTime(NSTimeInterval value) {
     self.positionLabel.textColor = UIColor.secondaryLabelColor;
     self.elapsedLabel.textColor = UIColor.secondaryLabelColor;
     self.durationLabel.textColor = UIColor.secondaryLabelColor;
-    self.slider.minimumTrackTintColor = UIColor.labelColor;
+    YTKACEStyleAudioSlider(self.slider);
     self.slider.maximumTrackTintColor = UIColor.tertiaryLabelColor;
     self.playButton.tintColor = UIColor.labelColor;
     [self.queueTable reloadData];
@@ -157,6 +296,7 @@ static NSString *YTKACEAudioTime(NSTimeInterval value) {
     [more.widthAnchor constraintEqualToConstant:44.0].active = YES;
     [more.heightAnchor constraintEqualToConstant:44.0].active = YES;
     [self.view addSubview:top];
+    self.topBar = top;
 
     self.artworkView = [UIImageView new];
     self.artworkView.contentMode = UIViewContentModeScaleAspectFill;
@@ -179,7 +319,7 @@ static NSString *YTKACEAudioTime(NSTimeInterval value) {
     [self.view addSubview:self.channelLabel];
 
     self.slider = [UISlider new];
-    self.slider.minimumTrackTintColor = UIColor.labelColor;
+    YTKACEStyleAudioSlider(self.slider);
     self.slider.maximumTrackTintColor = UIColor.tertiaryLabelColor;
     self.slider.translatesAutoresizingMaskIntoConstraints = NO;
     [self.slider addTarget:self action:@selector(sliderStarted)
@@ -220,6 +360,7 @@ static NSString *YTKACEAudioTime(NSTimeInterval value) {
     [self.playButton.widthAnchor constraintEqualToConstant:72.0].active = YES;
     [self.playButton.heightAnchor constraintEqualToConstant:72.0].active = YES;
     [self.view addSubview:controls];
+    self.controlsView = controls;
 
     UILayoutGuide *safe = self.view.safeAreaLayoutGuide;
     NSLayoutConstraint *artworkWidth = [self.artworkView.widthAnchor
@@ -257,65 +398,146 @@ static NSString *YTKACEAudioTime(NSTimeInterval value) {
 
 - (void)buildQueue {
     self.queuePanel = [UIView new];
-    self.queuePanel.backgroundColor =
-        YTKACEInterfaceBackgroundColor(self.traitCollection);
+    self.queuePanel.layer.cornerRadius = 16.0;
+    self.queuePanel.layer.maskedCorners = kCALayerMinXMinYCorner | kCALayerMaxXMinYCorner;
+    self.queuePanel.layer.shadowColor = UIColor.blackColor.CGColor;
+    self.queuePanel.layer.shadowOpacity = 0.16;
+    self.queuePanel.layer.shadowRadius = 14.0;
+    self.queuePanel.layer.shadowOffset = CGSizeMake(0.0, -2.0);
     self.queuePanel.translatesAutoresizingMaskIntoConstraints = NO;
     [self.view addSubview:self.queuePanel];
 
-    UIButton *header = [UIButton buttonWithType:UIButtonTypeSystem];
-    header.tintColor = UIColor.secondaryLabelColor;
-    header.translatesAutoresizingMaskIntoConstraints = NO;
-    [header addTarget:self action:@selector(toggleQueue)
-        forControlEvents:UIControlEventTouchUpInside];
-    UILabel *handle = [UILabel new];
-    handle.text = YTKACELocalized(@"━");
-    handle.textColor = UIColor.tertiaryLabelColor;
-    handle.font = [UIFont systemFontOfSize:19.0 weight:UIFontWeightBold];
-    handle.textAlignment = NSTextAlignmentCenter;
-    UILabel *queueTitle = [UILabel new];
-    queueTitle.text = YTKACELocalized(@"Your Queue");
-    queueTitle.textColor = UIColor.secondaryLabelColor;
-    queueTitle.font = [UIFont systemFontOfSize:11.0 weight:UIFontWeightMedium];
-    queueTitle.textAlignment = NSTextAlignmentCenter;
-    UIStackView *headerLabels = [[UIStackView alloc] initWithArrangedSubviews:@[
-        handle, queueTitle
+    UIView *content = [UIView new];
+    content.clipsToBounds = YES;
+    content.layer.cornerRadius = 16.0;
+    content.layer.maskedCorners = kCALayerMinXMinYCorner | kCALayerMaxXMinYCorner;
+    content.translatesAutoresizingMaskIntoConstraints = NO;
+    [self.queuePanel addSubview:content];
+
+    self.queueHeader = [UIView new];
+    self.queueHeader.translatesAutoresizingMaskIntoConstraints = NO;
+    [self.queueHeader addGestureRecognizer:[[UITapGestureRecognizer alloc]
+        initWithTarget:self action:@selector(toggleQueue)]];
+    [self.queueHeader addGestureRecognizer:[[UIPanGestureRecognizer alloc]
+        initWithTarget:self action:@selector(headerPanned:)]];
+    [content addSubview:self.queueHeader];
+
+    self.grabber = [UIView new];
+    self.grabber.backgroundColor = UIColor.tertiaryLabelColor;
+    self.grabber.layer.cornerRadius = 2.5;
+    self.grabber.translatesAutoresizingMaskIntoConstraints = NO;
+    [self.queueHeader addSubview:self.grabber];
+
+    self.queueTitle = [UILabel new];
+    self.queueTitle.text = YTKACELocalized(@"Your Queue");
+    self.queueTitle.textColor = UIColor.labelColor;
+    self.queueTitle.font = [UIFont systemFontOfSize:15.0 weight:UIFontWeightSemibold];
+    self.queueSubtitle = [UILabel new];
+    self.queueSubtitle.textColor = UIColor.secondaryLabelColor;
+    self.queueSubtitle.font = [UIFont systemFontOfSize:12.0];
+    UIStackView *titles = [[UIStackView alloc] initWithArrangedSubviews:@[
+        self.queueTitle, self.queueSubtitle
     ]];
-    headerLabels.axis = UILayoutConstraintAxisVertical;
-    headerLabels.spacing = -8.0;
-    headerLabels.userInteractionEnabled = NO;
-    headerLabels.translatesAutoresizingMaskIntoConstraints = NO;
-    [header addSubview:headerLabels];
-    [self.queuePanel addSubview:header];
+    titles.axis = UILayoutConstraintAxisVertical;
+    titles.spacing = 1.0;
+    titles.userInteractionEnabled = NO;
+    titles.translatesAutoresizingMaskIntoConstraints = NO;
+    [self.queueHeader addSubview:titles];
+
+    self.miniRow = [UIView new];
+    self.miniRow.clipsToBounds = YES;
+    self.miniRow.alpha = 0.0;
+    self.miniRow.translatesAutoresizingMaskIntoConstraints = NO;
+    [self.miniRow addGestureRecognizer:[[UITapGestureRecognizer alloc]
+        initWithTarget:self action:@selector(collapseQueue)]];
+    [content addSubview:self.miniRow];
+    self.miniArtwork = [UIImageView new];
+    self.miniArtwork.contentMode = UIViewContentModeScaleAspectFill;
+    self.miniArtwork.clipsToBounds = YES;
+    self.miniArtwork.layer.cornerRadius = 6.0;
+    self.miniArtwork.tintColor = UIColor.systemGrayColor;
+    self.miniTitle = [UILabel new];
+    self.miniTitle.font = [UIFont systemFontOfSize:14.0 weight:UIFontWeightSemibold];
+    self.miniTitle.textColor = UIColor.labelColor;
+    self.miniChannel = [UILabel new];
+    self.miniChannel.font = [UIFont systemFontOfSize:12.0];
+    self.miniChannel.textColor = UIColor.secondaryLabelColor;
+    UIStackView *miniLabels = [[UIStackView alloc] initWithArrangedSubviews:@[
+        self.miniTitle, self.miniChannel
+    ]];
+    miniLabels.axis = UILayoutConstraintAxisVertical;
+    miniLabels.spacing = 1.0;
+    self.miniPlay = [self symbolButton:@"pause.fill" size:20.0 action:@selector(togglePlayback)];
+    UIButton *miniNext = [self symbolButton:@"forward.end.fill" size:17.0 action:@selector(next)];
+    for (UIView *view in @[self.miniArtwork, miniLabels, self.miniPlay, miniNext]) {
+        view.translatesAutoresizingMaskIntoConstraints = NO;
+        [self.miniRow addSubview:view];
+    }
 
     self.queueTable = [[UITableView alloc] initWithFrame:CGRectZero
         style:UITableViewStylePlain];
     self.queueTable.backgroundColor = UIColor.clearColor;
     self.queueTable.separatorStyle = UITableViewCellSeparatorStyleNone;
-    self.queueTable.rowHeight = 58.0;
+    self.queueTable.rowHeight = 60.0;
     self.queueTable.dataSource = self;
     self.queueTable.delegate = self;
     self.queueTable.allowsSelectionDuringEditing = YES;
+    self.queueTable.showsVerticalScrollIndicator = NO;
     self.queueTable.translatesAutoresizingMaskIntoConstraints = NO;
+    [self.queueTable registerClass:YTKACEQueueCell.class forCellReuseIdentifier:@"YTKACEAudioQueueCell"];
     [self.queueTable setEditing:YES animated:NO];
-    [self.queuePanel addSubview:self.queueTable];
+    [self.queueTable.panGestureRecognizer addTarget:self action:@selector(tablePanned:)];
+    UILongPressGestureRecognizer *press = [[UILongPressGestureRecognizer alloc]
+        initWithTarget:self action:@selector(queuePressed:)];
+    [self.queueTable addGestureRecognizer:press];
+    [content addSubview:self.queueTable];
 
     UILayoutGuide *safe = self.view.safeAreaLayoutGuide;
-    self.queueHeight = [self.queuePanel.heightAnchor constraintEqualToConstant:38.0];
+    self.queueHeight = [self.queuePanel.heightAnchor constraintEqualToConstant:60.0];
+    self.miniHeight = [self.miniRow.heightAnchor constraintEqualToConstant:0.0];
     [NSLayoutConstraint activateConstraints:@[
         [self.queuePanel.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor],
         [self.queuePanel.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor],
         [self.queuePanel.bottomAnchor constraintEqualToAnchor:self.view.bottomAnchor],
         self.queueHeight,
-        [header.topAnchor constraintEqualToAnchor:self.queuePanel.topAnchor],
-        [header.leadingAnchor constraintEqualToAnchor:safe.leadingAnchor],
-        [header.trailingAnchor constraintEqualToAnchor:safe.trailingAnchor],
-        [header.heightAnchor constraintEqualToConstant:42.0],
-        [headerLabels.centerXAnchor constraintEqualToAnchor:header.centerXAnchor],
-        [headerLabels.centerYAnchor constraintEqualToAnchor:header.centerYAnchor],
-        [self.queueTable.topAnchor constraintEqualToAnchor:header.bottomAnchor],
+        [content.topAnchor constraintEqualToAnchor:self.queuePanel.topAnchor],
+        [content.leadingAnchor constraintEqualToAnchor:self.queuePanel.leadingAnchor],
+        [content.trailingAnchor constraintEqualToAnchor:self.queuePanel.trailingAnchor],
+        [content.bottomAnchor constraintEqualToAnchor:self.queuePanel.bottomAnchor],
+        [self.queueHeader.topAnchor constraintEqualToAnchor:content.topAnchor],
+        [self.queueHeader.leadingAnchor constraintEqualToAnchor:safe.leadingAnchor],
+        [self.queueHeader.trailingAnchor constraintEqualToAnchor:safe.trailingAnchor],
+        [self.queueHeader.heightAnchor constraintEqualToConstant:56.0],
+        [self.grabber.topAnchor constraintEqualToAnchor:self.queueHeader.topAnchor constant:6.0],
+        [self.grabber.centerXAnchor constraintEqualToAnchor:self.queueHeader.centerXAnchor],
+        [self.grabber.widthAnchor constraintEqualToConstant:36.0],
+        [self.grabber.heightAnchor constraintEqualToConstant:5.0],
+        [titles.leadingAnchor constraintEqualToAnchor:self.queueHeader.leadingAnchor constant:20.0],
+        [titles.trailingAnchor constraintLessThanOrEqualToAnchor:self.queueHeader.trailingAnchor constant:-20.0],
+        [titles.centerYAnchor constraintEqualToAnchor:self.queueHeader.centerYAnchor constant:4.0],
+        [self.miniRow.topAnchor constraintEqualToAnchor:self.queueHeader.bottomAnchor],
+        [self.miniRow.leadingAnchor constraintEqualToAnchor:safe.leadingAnchor],
+        [self.miniRow.trailingAnchor constraintEqualToAnchor:safe.trailingAnchor],
+        self.miniHeight,
+        [self.miniArtwork.leadingAnchor constraintEqualToAnchor:self.miniRow.leadingAnchor constant:16.0],
+        [self.miniArtwork.topAnchor constraintEqualToAnchor:self.miniRow.topAnchor constant:4.0],
+        [self.miniArtwork.widthAnchor constraintEqualToConstant:48.0],
+        [self.miniArtwork.heightAnchor constraintEqualToConstant:48.0],
+        [miniLabels.leadingAnchor constraintEqualToAnchor:self.miniArtwork.trailingAnchor constant:12.0],
+        [miniLabels.centerYAnchor constraintEqualToAnchor:self.miniArtwork.centerYAnchor],
+        [miniLabels.trailingAnchor constraintLessThanOrEqualToAnchor:self.miniPlay.leadingAnchor constant:-8.0],
+        [self.miniPlay.centerYAnchor constraintEqualToAnchor:self.miniArtwork.centerYAnchor],
+        [self.miniPlay.widthAnchor constraintEqualToConstant:44.0],
+        [self.miniPlay.heightAnchor constraintEqualToConstant:44.0],
+        [miniNext.leadingAnchor constraintEqualToAnchor:self.miniPlay.trailingAnchor],
+        [miniNext.trailingAnchor constraintEqualToAnchor:self.miniRow.trailingAnchor constant:-8.0],
+        [miniNext.centerYAnchor constraintEqualToAnchor:self.miniArtwork.centerYAnchor],
+        [miniNext.widthAnchor constraintEqualToConstant:44.0],
+        [miniNext.heightAnchor constraintEqualToConstant:44.0],
+        [self.queueTable.topAnchor constraintEqualToAnchor:self.miniRow.bottomAnchor],
         [self.queueTable.leadingAnchor constraintEqualToAnchor:safe.leadingAnchor],
         [self.queueTable.trailingAnchor constraintEqualToAnchor:safe.trailingAnchor],
-        [self.queueTable.bottomAnchor constraintEqualToAnchor:self.queuePanel.bottomAnchor]
+        [self.queueTable.bottomAnchor constraintEqualToAnchor:content.bottomAnchor]
     ]];
 }
 
@@ -442,10 +664,20 @@ static NSString *YTKACEAudioTime(NSTimeInterval value) {
     NSURL *URL = self.session.currentURL;
     self.titleLabel.text = URL.lastPathComponent.stringByDeletingPathExtension ?: @"Audio";
     self.channelLabel.text = URL == nil ? nil : YTKACEStoredChannelName(URL);
-    if (self.queueOpen) self.queueHeight.constant = [self openQueueHeight];
-    UIImage *artwork = URL == nil ? nil : YTKACEMediaArtworkImage(URL);
-    self.artworkView.image = artwork ?: [UIImage systemImageNamed:@"music.note"];
+    if (![URL isEqual:self.artworkURL]) {
+        self.artworkURL = URL;
+        UIImage *artwork = URL == nil ? nil : YTKACEMediaArtworkImage(URL);
+        self.artworkView.image = artwork ?: [UIImage systemImageNamed:@"music.note"];
+        self.miniArtwork.image = self.artworkView.image;
+    }
     self.artworkView.tintColor = UIColor.systemGrayColor;
+    self.miniTitle.text = self.titleLabel.text;
+    self.miniChannel.text = self.channelLabel.text;
+    NSInteger nextIndex = self.session.currentIndex == NSNotFound ? NSNotFound : self.session.currentIndex + 1;
+    NSArray<NSURL *> *playlist = self.session.playlist;
+    self.queueSubtitle.text = nextIndex != NSNotFound && nextIndex < (NSInteger)playlist.count
+        ? playlist[(NSUInteger)nextIndex].lastPathComponent.stringByDeletingPathExtension
+        : [NSString stringWithFormat:@"%lu", (unsigned long)playlist.count];
     NSInteger count = self.session.playlist.count;
     NSInteger index = self.session.currentIndex == NSNotFound
         ? 0 : self.session.currentIndex + 1;
@@ -453,6 +685,7 @@ static NSString *YTKACEAudioTime(NSTimeInterval value) {
         (long)index, (long)count];
     NSString *play = self.session.player.rate == 0.0f ? @"play.fill" : @"pause.fill";
     [self.playButton setImage:[UIImage systemImageNamed:play] forState:UIControlStateNormal];
+    [self.miniPlay setImage:[UIImage systemImageNamed:play] forState:UIControlStateNormal];
     self.repeatButton.tintColor = self.session.repeatEnabled
         ? UIColor.systemRedColor : UIColor.labelColor;
     self.speedDetail.text = [NSString stringWithFormat:@"· %.2gx",
@@ -496,20 +729,181 @@ static NSString *YTKACEAudioTime(NSTimeInterval value) {
         toleranceBefore:kCMTimeZero toleranceAfter:kCMTimeZero];
 }
 
-- (CGFloat)openQueueHeight {
-    [self.view layoutIfNeeded];
-    UIView *anchor = self.channelLabel.text.length != 0 ? self.channelLabel : self.titleLabel;
-    CGFloat room = CGRectGetHeight(self.view.bounds) - CGRectGetMaxY(anchor.frame) - 16.0;
-    CGFloat height = MIN(330.0, CGRectGetHeight(self.view.bounds) * 0.43);
-    return MAX(120.0, MIN(height, room));
+- (CGFloat)queueHeightForState:(NSInteger)state {
+    CGFloat height = CGRectGetHeight(self.view.bounds);
+    CGFloat collapsed = 60.0 + self.view.safeAreaInsets.bottom;
+    CGFloat full = MAX(height - CGRectGetMaxY(self.topBar.frame) - 6.0, collapsed);
+    if (state <= 0) return collapsed;
+    if (state >= 2) return full;
+    CGFloat below = height - CGRectGetMaxY(self.controlsView.frame) - 8.0;
+    CGFloat half = below >= 220.0 ? below : height * 0.46;
+    return MIN(MAX(half, collapsed + 80.0), full);
+}
+
+- (void)updateQueueProgress {
+    CGFloat collapsed = [self queueHeightForState:0];
+    CGFloat half = [self queueHeightForState:1];
+    CGFloat full = [self queueHeightForState:2];
+    CGFloat height = self.queueHeight.constant;
+    CGFloat expand = full - half > 1.0 ? (height - half) / (full - half) : 0.0;
+    expand = MIN(MAX(expand, 0.0), 1.0);
+    CGFloat peek = half - collapsed > 1.0 ? (half - height) / (half - collapsed) : 1.0;
+    peek = MIN(MAX(peek, 0.0), 1.0);
+    self.miniHeight.constant = 60.0 * expand;
+    self.miniRow.alpha = expand;
+    self.queueSubtitle.alpha = peek;
+}
+
+- (void)setQueueState:(NSInteger)state velocity:(CGFloat)velocity {
+    self.queueState = MIN(MAX(state, 0), 2);
+    self.queueHeight.constant = [self queueHeightForState:self.queueState];
+    self.queueTable.showsVerticalScrollIndicator = self.queueState == 2;
+    [self updateQueueProgress];
+    CGFloat distance = fabs(self.queuePanel.bounds.size.height - self.queueHeight.constant);
+    CGFloat spring = distance > 1.0 ? MIN(fabs(velocity) / distance, 8.0) : 0.0;
+    [UIView animateWithDuration:0.42 delay:0.0 usingSpringWithDamping:0.86
+        initialSpringVelocity:spring options:UIViewAnimationOptionAllowUserInteraction |
+            UIViewAnimationOptionBeginFromCurrentState
+        animations:^{ [self.view layoutIfNeeded]; } completion:nil];
+}
+
+- (void)viewDidLayoutSubviews {
+    [super viewDidLayoutSubviews];
+    if (self.draggingQueue) return;
+    CGFloat target = [self queueHeightForState:self.queueState];
+    if (fabs(target - self.queueHeight.constant) > 0.5) {
+        self.queueHeight.constant = target;
+        [self updateQueueProgress];
+    }
 }
 
 - (void)toggleQueue {
-    self.queueOpen = !self.queueOpen;
-    self.queueHeight.constant = self.queueOpen ? [self openQueueHeight] : 38.0;
-    [UIView animateWithDuration:0.28 delay:0.0
-        usingSpringWithDamping:0.9 initialSpringVelocity:0.0 options:0
-        animations:^{ [self.view layoutIfNeeded]; } completion:nil];
+    [self setQueueState:self.queueState == 0 ? 1 : 0 velocity:0.0];
+}
+
+- (void)collapseQueue {
+    [self setQueueState:0 velocity:0.0];
+}
+
+- (void)dragQueueTo:(CGFloat)translation {
+    CGFloat low = [self queueHeightForState:0];
+    CGFloat high = [self queueHeightForState:2];
+    CGFloat height = self.dragStartHeight - translation;
+    if (height > high) height = high + (height - high) * 0.2;
+    if (height < low) height = low - (low - height) * 0.2;
+    self.queueHeight.constant = height;
+    [self updateQueueProgress];
+}
+
+- (void)finishQueueDrag:(CGFloat)velocity {
+    self.draggingQueue = NO;
+    CGFloat projected = self.queueHeight.constant - velocity * 0.18;
+    NSInteger best = 0;
+    CGFloat bestDistance = CGFLOAT_MAX;
+    for (NSInteger state = 0; state <= 2; state++) {
+        CGFloat distance = fabs([self queueHeightForState:state] - projected);
+        if (distance < bestDistance) {
+            bestDistance = distance;
+            best = state;
+        }
+    }
+    [self setQueueState:best velocity:velocity];
+}
+
+- (void)headerPanned:(UIPanGestureRecognizer *)pan {
+    CGFloat translation = [pan translationInView:self.view].y;
+    if (pan.state == UIGestureRecognizerStateBegan) {
+        [self.queuePanel.layer removeAllAnimations];
+        self.draggingQueue = YES;
+        self.dragStartHeight = self.queuePanel.bounds.size.height;
+        self.queueHeight.constant = self.dragStartHeight;
+    } else if (pan.state == UIGestureRecognizerStateChanged) {
+        [self dragQueueTo:translation];
+    } else if (pan.state != UIGestureRecognizerStatePossible) {
+        [self finishQueueDrag:[pan velocityInView:self.view].y];
+    }
+}
+
+- (void)tablePanned:(UIPanGestureRecognizer *)pan {
+    UITableView *table = self.queueTable;
+    CGFloat top = -table.adjustedContentInset.top;
+    CGFloat translation = [pan translationInView:self.view].y;
+    if (pan.state == UIGestureRecognizerStateBegan) {
+        self.tableDrivesQueue = NO;
+        self.tablePanIgnored = NO;
+        self.dragBaseline = translation;
+        UIView *hit = [table hitTest:[pan locationInView:table] withEvent:nil];
+        for (UIView *view = hit; view != nil && view != table; view = view.superview) {
+            if ([NSStringFromClass(view.class) containsString:@"Reorder"]) {
+                self.tablePanIgnored = YES;
+                break;
+            }
+        }
+    }
+    if (self.tablePanIgnored) return;
+    if (pan.state == UIGestureRecognizerStateBegan || pan.state == UIGestureRecognizerStateChanged) {
+        if (!self.tableDrivesQueue) {
+            BOOL atTop = table.contentOffset.y <= top + 0.5;
+            BOOL pullingDown = translation > self.dragBaseline;
+            if (self.queueState != 2 || (atTop && pullingDown)) {
+                self.tableDrivesQueue = YES;
+                self.draggingQueue = YES;
+                self.dragBaseline = translation;
+                self.dragStartHeight = self.queuePanel.bounds.size.height;
+            } else {
+                self.dragBaseline = MIN(self.dragBaseline, translation);
+                return;
+            }
+        }
+        [self dragQueueTo:translation - self.dragBaseline];
+        table.contentOffset = CGPointMake(table.contentOffset.x, top);
+        return;
+    }
+    if (self.tableDrivesQueue && pan.state != UIGestureRecognizerStatePossible) {
+        self.tableDrivesQueue = NO;
+        [self finishQueueDrag:[pan velocityInView:self.view].y];
+        table.contentOffset = CGPointMake(table.contentOffset.x, top);
+    }
+}
+
+- (void)queuePressed:(UILongPressGestureRecognizer *)press {
+    if (press.state != UIGestureRecognizerStateBegan) return;
+    NSIndexPath *path = [self.queueTable indexPathForRowAtPoint:[press locationInView:self.queueTable]];
+    NSArray<NSURL *> *playlist = self.session.playlist;
+    if (path == nil || (NSUInteger)path.row >= playlist.count) return;
+    NSURL *URL = playlist[(NSUInteger)path.row];
+    if ([URL isEqual:self.session.currentURL]) return;
+    __weak YTKACEAudioPlayerController *weakSelf = self;
+    dispatch_block_t playNext = ^{
+        YTKACEAudioPlayerController *strongSelf = weakSelf;
+        NSMutableArray<NSURL *> *queue = [strongSelf.session.playlist mutableCopy];
+        if (![queue containsObject:URL]) return;
+        [queue removeObject:URL];
+        NSUInteger current = strongSelf.session.currentURL == nil
+            ? NSNotFound : [queue indexOfObject:strongSelf.session.currentURL];
+        [queue insertObject:URL atIndex:current == NSNotFound ? 0 : current + 1];
+        [strongSelf.session updatePlaylist:queue];
+        [strongSelf refresh];
+    };
+    dispatch_block_t remove = ^{
+        YTKACEAudioPlayerController *strongSelf = weakSelf;
+        NSMutableArray<NSURL *> *queue = [strongSelf.session.playlist mutableCopy];
+        [queue removeObject:URL];
+        [strongSelf.session updatePlaylist:queue];
+        [strongSelf refresh];
+    };
+    UIImageSymbolConfiguration *configuration =
+        [UIImageSymbolConfiguration configurationWithPointSize:17.0 weight:UIImageSymbolWeightRegular];
+    YTKACEPresentNativeSheet(URL.lastPathComponent.stringByDeletingPathExtension, nil,
+        [self.queueTable cellForRowAtIndexPath:path] ?: self.queueTable, @[
+        @{@"title": YTKACELocalized(@"Play Next"),
+          @"icon": [UIImage systemImageNamed:@"text.line.first.and.arrowtriangle.forward"
+                            withConfiguration:configuration] ?: [UIImage new],
+          @"handler": playNext},
+        @{@"title": YTKACELocalized(@"Remove"),
+          @"icon": [UIImage systemImageNamed:@"trash" withConfiguration:configuration] ?: [UIImage new],
+          @"handler": remove}
+    ]);
 }
 
 - (void)shuffleQueue {
@@ -613,31 +1007,41 @@ static NSString *YTKACEAudioTime(NSTimeInterval value) {
     return self.session.playlist.count;
 }
 
+- (void)fillQueueCell:(YTKACEQueueCell *)cell info:(NSDictionary *)info {
+    UIImage *thumb = info[@"thumb"];
+    cell.thumb.image = thumb ?: [UIImage systemImageNamed:@"music.note"];
+    if (info == nil) {
+        cell.detail.text = @" ";
+        return;
+    }
+    NSString *time = YTKACEAudioTime([info[@"duration"] doubleValue]);
+    NSString *channel = info[@"channel"];
+    cell.detail.text = channel.length != 0 ? [NSString stringWithFormat:@"%@  ·  %@", channel, time] : time;
+}
+
 - (UITableViewCell *)tableView:(UITableView *)tableView
          cellForRowAtIndexPath:(NSIndexPath *)indexPath {
-    NSString *identifier = @"YTKACEAudioQueueCell";
-    UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:identifier];
-    if (cell == nil) {
-        cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle
-            reuseIdentifier:identifier];
-        cell.backgroundColor = UIColor.clearColor;
-        cell.textLabel.font = [UIFont systemFontOfSize:13.0 weight:UIFontWeightSemibold];
-        cell.detailTextLabel.font = [UIFont systemFontOfSize:11.0];
-        cell.detailTextLabel.textColor = UIColor.secondaryLabelColor;
-    }
+    YTKACEQueueCell *cell = [tableView dequeueReusableCellWithIdentifier:@"YTKACEAudioQueueCell"
+                                                            forIndexPath:indexPath];
     NSURL *URL = self.session.playlist[(NSUInteger)indexPath.row];
-    cell.textLabel.text = URL.lastPathComponent.stringByDeletingPathExtension;
-    cell.textLabel.textColor = [URL isEqual:self.session.currentURL]
-        ? UIColor.systemRedColor : UIColor.labelColor;
-    NSTimeInterval duration = CMTimeGetSeconds([AVURLAsset URLAssetWithURL:URL
-        options:nil].duration);
-    NSString *channel = YTKACEStoredChannelName(URL);
-    cell.detailTextLabel.text = channel.length != 0
-        ? [NSString stringWithFormat:@"%@  ·  %@", channel, YTKACEAudioTime(duration)]
-        : YTKACEAudioTime(duration);
-    UIImage *artwork = YTKACEMediaArtworkImage(URL);
-    cell.imageView.image = artwork ?: [UIImage systemImageNamed:@"music.note"];
-    cell.imageView.tintColor = UIColor.systemGrayColor;
+    BOOL current = [URL isEqual:self.session.currentURL];
+    UIColor *accent = YTKACEProgressScrubberTint();
+    cell.URL = URL;
+    cell.title.text = URL.lastPathComponent.stringByDeletingPathExtension;
+    cell.title.textColor = current ? accent : UIColor.labelColor;
+    cell.playing.hidden = !current;
+    cell.playing.tintColor = accent;
+    cell.thumb.backgroundColor = YTKACEInterfaceBackgroundColor(self.traitCollection);
+    NSDictionary *info = [YTKACEQueueInfoCache() objectForKey:URL.path];
+    [self fillQueueCell:cell info:info];
+    if (info == nil) {
+        __weak YTKACEQueueCell *weakCell = cell;
+        __weak YTKACEAudioPlayerController *weakSelf = self;
+        YTKACELoadQueueInfo(URL, ^(NSDictionary *loaded) {
+            if (![weakCell.URL isEqual:URL]) return;
+            [weakSelf fillQueueCell:weakCell info:loaded];
+        });
+    }
     return cell;
 }
 

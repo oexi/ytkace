@@ -693,6 +693,7 @@ Licensed under CC BY-NC-SA 4.0." = "YTKACE SponsorBlock بەکاردێنێت.
 
 /* Shorts download button position picker options */
 "Remove Frosted Tab Bar" = "لابردنی شریتی تاب";
+"Shrink Tab Bar When Scrolling" = "بچووککردنەوەی شریتی تاب لە کاتی سکڕۆڵ";
 
 /* Sleep timer */
 "Sleep Timer Button" = "دوچەری پشووی نوستن";
@@ -806,3 +807,19 @@ Licensed under CC BY-NC-SA 4.0." = "YTKACE SponsorBlock بەکاردێنێت.
 "via SABR" = "لە ڕێگەی SABR";
 "Reloads the video when playback fails. Restart YouTube after changing." = "کاتێک لێدان شکست دەهێنێت ڤیدیۆکە دووبارە بار دەکاتەوە. دوای گۆڕین YouTube دووبارە بکەرەوە.";
 "SABR is the default. Use TV Client or Direct if downloads fail." = "SABR بنەڕەتییە. ئەگەر داگرتنەکان شکستیان هێنا TV Client یان Direct بەکاربهێنە.";
+"Liquid Glass Tab Bar" = "شریتی تابی Liquid Glass";
+"Liquid Glass" = "Liquid Glass";
+"Tab Bar and Top Bar" = "شریتی تابەکان و شریتی سەرەوە";
+"Menus and Sheets" = "لیست و پەڕەکان";
+"Player Buttons" = "دوگمەکانی لێدەر";
+"GLASS" = "شووشە";
+"EXTRAS" = "زیادە";
+"Selected Tab Color" = "ڕەنگی تابی هەڵبژێردراو";
+"Text Only" = "تەنها دەق";
+"Text and Icon" = "دەق و ئایکۆن";
+"Color" = "ڕەنگ";
+"Top Bar Buttons" = "دوگمەکانی شریتی سەرەوە";
+"YTKACE Toasts and Popups" = "ئاگادارکردنەوە و پەنجەرە بچووکەکانی YTKACE";
+"Tab bar, menus, toasts, and player" = "شریتی تاب، لیستەکان، ئاگادارکردنەوەکان و لێدەر";
+"Reload" = "دووبارە بارکردنەوە";
+"HLS Streams" = "پەخشی HLS";

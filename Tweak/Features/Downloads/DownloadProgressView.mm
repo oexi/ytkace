@@ -1,6 +1,7 @@
 #import "DownloadProgressView.h"
 #import "../../Runtime/Preferences.h"
 #import "../../Runtime/Localization.h"
+#import "../../UI/Notice.h"
 
 #import <UIKit/UIKit.h>
 #import <math.h>
@@ -53,6 +54,14 @@
         : UIColor.systemGray4Color;
     self.card.layer.borderWidth = dark ? 0.0 : 0.5;
     self.card.layer.borderColor = UIColor.separatorColor.CGColor;
+    if (YTKACEApplyGlassBackground(self.card, NO)) {
+        self.card.layer.borderWidth = 0.0;
+        self.card.clipsToBounds = YES;
+    } else {
+        self.card.clipsToBounds = NO;
+        self.card.layer.shadowOpacity = 0.24;
+    }
+    [self layoutCard];
 }
 
 + (instancetype)sharedView {
@@ -147,7 +156,15 @@
     CGFloat textWidth = MAX(width - 206.0, 80.0);
     self.titleLabel.frame = CGRectMake(118.0, 11.0, textWidth, 20.0);
     self.statusLabel.frame = CGRectMake(118.0, 35.0, width - 158.0, 18.0);
-    self.progressView.frame = CGRectMake(0.0, 69.5, width, 2.0);
+    if (self.card.clipsToBounds) {
+        self.progressView.frame = CGRectMake(118.0, 60.0, MAX(0.0, width - 130.0), 3.0);
+        self.progressView.layer.cornerRadius = 1.5;
+        self.progressView.clipsToBounds = YES;
+    } else {
+        self.progressView.frame = CGRectMake(0.0, 69.5, width, 2.0);
+        self.progressView.layer.cornerRadius = 0.0;
+        self.progressView.clipsToBounds = NO;
+    }
 }
 
 - (void)attach {

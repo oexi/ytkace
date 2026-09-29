@@ -357,6 +357,13 @@ UIViewController *YTKACEMakeDownloadLogController(void) {
     pill.backgroundColor = UIColor.secondarySystemFillColor;
     pill.layer.cornerRadius = 19.0;
     pill.clipsToBounds = YES;
+    UIView *pillGlass = YTKACEMakeSettingsGlass();
+    if (pillGlass != nil) {
+        pillGlass.frame = pill.bounds;
+        pillGlass.layer.cornerRadius = 19.0;
+        [pill addSubview:pillGlass];
+        pill.backgroundColor = UIColor.clearColor;
+    }
 
     UIImageView *glass = [[UIImageView alloc]
         initWithImage:YTKACETemplateImage(@"", @"magnifyingglass")];
@@ -460,7 +467,7 @@ UIViewController *YTKACEMakeDownloadLogController(void) {
         case 0: return 1;
         case 1: return 4;
         case 2: return 5;
-        case 3: return 2;
+        case 3: return YTKACELiquidGlassAvailable() ? 3 : 2;
         case 4: return 2;
         default: return 0;
     }
@@ -634,16 +641,19 @@ UIViewController *YTKACEMakeDownloadLogController(void) {
     }
 
     if (indexPath.section == 3) {
-        NSArray *titles = @[YTKACELocalized(@"Navigation"), YTKACELocalized(@"Other")];
+        NSArray *titles = @[YTKACELocalized(@"Navigation"), YTKACELocalized(@"Liquid Glass"), YTKACELocalized(@"Other")];
         NSArray *details = @[
             YTKACELocalized(@"Top bar buttons, logo, and cast"),
+            YTKACELocalized(@"Tab bar, menus, toasts, and player"),
             YTKACELocalized(@"Appearance, privacy, and compatibility")
         ];
-        NSArray *symbols = @[@"rectangle.topthird.inset.filled", @"ellipsis.circle"];
+        NSArray *symbols = @[@"rectangle.topthird.inset.filled", @"drop", @"ellipsis.circle"];
+        NSUInteger row = (NSUInteger)indexPath.row;
+        if (!YTKACELiquidGlassAvailable() && row >= 1) row++;
         UITableViewCell *cell = [self baseCellForTableView:tableView style:UITableViewCellStyleSubtitle];
-        cell.textLabel.text = titles[(NSUInteger)indexPath.row];
-        cell.detailTextLabel.text = details[(NSUInteger)indexPath.row];
-        [self configureImageForCell:cell asset:@"" symbol:symbols[(NSUInteger)indexPath.row]];
+        cell.textLabel.text = titles[row];
+        cell.detailTextLabel.text = details[row];
+        [self configureImageForCell:cell asset:@"" symbol:symbols[row]];
         cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
         return cell;
     }
@@ -719,9 +729,12 @@ UIViewController *YTKACEMakeDownloadLogController(void) {
     } else if (group == 3) {
         NSArray *builders = @[
             [^UIViewController *{ return YTKACEMakeNavigationOptionsController(); } copy],
+            [^UIViewController *{ return YTKACEMakeGlassOptionsController(); } copy],
             [^UIViewController *{ return YTKACEMakeMiscOptionsController(); } copy]
         ];
-        UIViewController *(^builder)(void) = builders[(NSUInteger)indexPath.row];
+        NSUInteger row = (NSUInteger)indexPath.row;
+        if (!YTKACELiquidGlassAvailable() && row >= 1) row++;
+        UIViewController *(^builder)(void) = builders[row];
         controller = builder();
     }
     if (controller != nil) {

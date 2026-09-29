@@ -5,6 +5,7 @@
 #import "YTKACEDownloadsController.h"
 #import "../Runtime/Hooking.h"
 #import "../UI/Assets.h"
+#import "../YTKACE.h"
 
 #import <UIKit/UIKit.h>
 #import <objc/message.h>
@@ -42,6 +43,7 @@ static NSArray<NSDictionary *> *YTKACENativeLayout(void) {
         @{@"kind": @"row", @"title": @"Cellular Quality"},
         @{@"kind": @"header", @"title": @"APP"},
         @{@"kind": @"row", @"title": @"Navigation"},
+        @{@"kind": @"row", @"title": @"Liquid Glass"},
         @{@"kind": @"row", @"title": @"Other"},
         @{@"kind": @"header", @"title": @"ABOUT"},
         @{@"kind": @"row", @"title": @"itzzace", @"developer": @YES},
@@ -98,6 +100,7 @@ static NSString *YTKACENativeSettingsSubtitle(NSString *title) {
             @"Playback": @"Quality menu, autoplay and skip timing",
             @"Shorts": @"Playback, feed and action buttons",
             @"Navigation": @"Top buttons, branding and topic chips",
+            @"Liquid Glass": @"Tab bar, menus, toasts, and player",
             @"Tabs": @"Choose and reorder bottom tabs",
             @"Gestures": @"Brightness, volume, hold and tap to seek",
             @"Other": @"OLED, startup, sharing, layout and prompts",
@@ -196,6 +199,7 @@ static UIImage *YTKACENativeSettingsIconImage(NSString *title) {
             @"Overlay": @"rectangle.on.rectangle",
             @"Playback": @"playpause",
             @"Navigation": @"rectangle.topthird.inset.filled",
+            @"Liquid Glass": @"drop",
             @"Tabs": @"rectangle.bottomthird.inset.filled",
             @"Gestures": @"hand.draw",
             @"Wi-Fi Quality": @"wifi",
@@ -421,6 +425,7 @@ static void YTKACEUpdateNativeSettingsSection(id receiver, SEL selector,
         @"Playback": [^UIViewController *{ return YTKACEMakeStreamingOptionsController(); } copy],
         @"Shorts": [^UIViewController *{ return YTKACEMakeShortsOptionsController(); } copy],
         @"Navigation": [^UIViewController *{ return YTKACEMakeNavigationOptionsController(); } copy],
+        @"Liquid Glass": [^UIViewController *{ return YTKACEMakeGlassOptionsController(); } copy],
         @"Tabs": [^UIViewController *{ return YTKACEMakeTabBarOptionsController(); } copy],
         @"Gestures": [^UIViewController *{ return YTKACEMakeGestureOptionsController(); } copy],
         @"Wi-Fi Quality": [^UIViewController *{ return YTKACEMakeWiFiQualityController(); } copy],
@@ -438,6 +443,7 @@ static void YTKACEUpdateNativeSettingsSection(id receiver, SEL selector,
     for (NSDictionary *definition in YTKACENativeLayout()) {
         NSString *kind = definition[@"kind"];
         NSString *title = definition[@"title"];
+        if ([title isEqualToString:@"Liquid Glass"] && !YTKACELiquidGlassAvailable()) continue;
         id item = nil;
         if ([kind isEqualToString:@"search"]) {
             item = YTKACENativeSearchRow(settingsController);

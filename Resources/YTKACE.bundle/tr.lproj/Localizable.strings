@@ -693,6 +693,7 @@ CC BY-NC-SA 4.0 lisansı altında.";
 
 /* Shorts download button position picker options */
 "Remove Frosted Tab Bar" = "Buzlu sekme çubuğunu kaldır";
+"Shrink Tab Bar When Scrolling" = "Kaydırırken sekme çubuğunu küçült";
 
 /* Sleep timer */
 "Sleep Timer Button" = "Uyku Zamanlayıcı Düğmesi";
@@ -806,3 +807,19 @@ CC BY-NC-SA 4.0 lisansı altında.";
 "via SABR" = "SABR ile";
 "Reloads the video when playback fails. Restart YouTube after changing." = "Oynatma başarısız olduğunda videoyu yeniden yükler. Değiştirdikten sonra YouTube'u yeniden başlatın.";
 "SABR is the default. Use TV Client or Direct if downloads fail." = "SABR varsayılandır. İndirmeler başarısız olursa TV Client veya Direct kullanın.";
+"Liquid Glass Tab Bar" = "Liquid Glass sekme çubuğu";
+"Liquid Glass" = "Liquid Glass";
+"Tab Bar and Top Bar" = "Sekme Çubuğu ve Üst Çubuk";
+"Menus and Sheets" = "Menüler ve sayfalar";
+"Player Buttons" = "Oynatıcı düğmeleri";
+"GLASS" = "CAM";
+"EXTRAS" = "EKSTRALAR";
+"Selected Tab Color" = "Seçili sekme rengi";
+"Text Only" = "Yalnızca metin";
+"Text and Icon" = "Metin ve simge";
+"Color" = "Renk";
+"Top Bar Buttons" = "Üst çubuk düğmeleri";
+"YTKACE Toasts and Popups" = "YTKACE bildirimleri ve açılır pencereleri";
+"Tab bar, menus, toasts, and player" = "Sekme çubuğu, menüler, bildirimler ve oynatıcı";
+"Reload" = "Yeniden yükle";
+"HLS Streams" = "HLS Akışları";

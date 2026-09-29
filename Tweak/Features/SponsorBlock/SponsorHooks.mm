@@ -3,6 +3,7 @@
 #import "../../YTKACE.h"
 #import "../../Runtime/Hooking.h"
 #import "../../Runtime/Preferences.h"
+#import "../../UI/Notice.h"
 #import "../../Runtime/Localization.h"
 #import "../Downloads/DownloadLog.h"
 #import "../../UI/Assets.h"
@@ -190,6 +191,7 @@ static void YTKACEShowSponsorSkippedHUD(id controller, double start, NSString *c
         content.spacing = 18.0;
         content.translatesAutoresizingMaskIntoConstraints = NO;
         [banner addSubview:content];
+        YTKACEApplyGlassBackground(banner, YES);
         [presenter.view addSubview:banner];
         UILayoutGuide *safe = presenter.view.safeAreaLayoutGuide;
         [NSLayoutConstraint activateConstraints:@[
@@ -287,6 +289,7 @@ static void YTKACEAskToSkipSponsor(id controller, double start, double end,
         content.spacing = 18.0;
         content.translatesAutoresizingMaskIntoConstraints = NO;
         [banner addSubview:content];
+        YTKACEApplyGlassBackground(banner, YES);
         [presenter.view addSubview:banner];
         UILayoutGuide *safe = presenter.view.safeAreaLayoutGuide;
         [NSLayoutConstraint activateConstraints:@[

@@ -702,6 +702,7 @@ CC BY-NC-SA 4.0 ライセンス。";
 /* Skip time stepper */
 "Skip Time" = "スキップ時間";
 "Remove Frosted Tab Bar" = "フロストタブバーを削除";
+"Shrink Tab Bar When Scrolling" = "スクロール時にタブバーを縮小";
 
 /* Sleep timer */
 "Sleep Timer Button" = "スリープタイマーボタン";
@@ -815,3 +816,19 @@ CC BY-NC-SA 4.0 ライセンス。";
 "via SABR" = "SABR 経由";
 "Reloads the video when playback fails. Restart YouTube after changing." = "再生に失敗したときに動画を再読み込みします。変更後は YouTube を再起動してください。";
 "SABR is the default. Use TV Client or Direct if downloads fail." = "SABR がデフォルトです。ダウンロードに失敗する場合は TV Client または Direct を使用してください。";
+"Liquid Glass Tab Bar" = "Liquid Glass タブバー";
+"Liquid Glass" = "Liquid Glass";
+"Tab Bar and Top Bar" = "タブバーとトップバー";
+"Menus and Sheets" = "メニューとシート";
+"Player Buttons" = "プレーヤーのボタン";
+"GLASS" = "ガラス";
+"EXTRAS" = "その他";
+"Selected Tab Color" = "選択中タブの色";
+"Text Only" = "テキストのみ";
+"Text and Icon" = "テキストとアイコン";
+"Color" = "色";
+"Top Bar Buttons" = "トップバーのボタン";
+"YTKACE Toasts and Popups" = "YTKACEのトーストとポップアップ";
+"Tab bar, menus, toasts, and player" = "タブバー、メニュー、トースト、プレーヤー";
+"Reload" = "再読み込み";
+"HLS Streams" = "HLSストリーム";

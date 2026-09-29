@@ -24,4 +24,8 @@ FOUNDATION_EXPORT void YTKACEPresentNativeSheet(
     NSArray<NSDictionary *> *actions
 );
 
+FOUNDATION_EXPORT id _Nullable YTKACEMakeSheet(NSString *_Nullable title, NSString *_Nullable subtitle);
+
+FOUNDATION_EXPORT BOOL YTKACEShowSheet(id _Nullable sheet, UIViewController *_Nullable presenter);
+
 NS_ASSUME_NONNULL_END

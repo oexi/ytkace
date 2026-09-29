@@ -693,6 +693,7 @@ Licencia bajo CC BY-NC-SA 4.0.";
 
 /* Shorts download button position picker options */
 "Remove Frosted Tab Bar" = "Eliminar barra de pestañas con efecto helado";
+"Shrink Tab Bar When Scrolling" = "Reducir barra de pestañas al desplazar";
 
 /* Sleep timer */
 "Sleep Timer Button" = "Botón del temporizador";
@@ -806,3 +807,19 @@ Licencia bajo CC BY-NC-SA 4.0.";
 "via SABR" = "vía SABR";
 "Reloads the video when playback fails. Restart YouTube after changing." = "Recarga el video cuando falla la reproducción. Reinicia YouTube después de cambiarlo.";
 "SABR is the default. Use TV Client or Direct if downloads fail." = "SABR es el predeterminado. Usa TV Client o Direct si las descargas fallan.";
+"Liquid Glass Tab Bar" = "Barra de pestañas Liquid Glass";
+"Liquid Glass" = "Liquid Glass";
+"Tab Bar and Top Bar" = "Barra de pestañas y barra superior";
+"Menus and Sheets" = "Menús y hojas";
+"Player Buttons" = "Botones del reproductor";
+"GLASS" = "CRISTAL";
+"EXTRAS" = "EXTRAS";
+"Selected Tab Color" = "Color de la pestaña seleccionada";
+"Text Only" = "Solo texto";
+"Text and Icon" = "Texto e icono";
+"Color" = "Color";
+"Top Bar Buttons" = "Botones de la barra superior";
+"YTKACE Toasts and Popups" = "Avisos y ventanas de YTKACE";
+"Tab bar, menus, toasts, and player" = "Barra de pestañas, menús, avisos y reproductor";
+"Reload" = "Recargar";
+"HLS Streams" = "Streams HLS";

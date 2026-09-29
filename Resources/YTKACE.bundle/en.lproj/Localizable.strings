@@ -693,6 +693,7 @@ Licensed under CC BY-NC-SA 4.0.";
 
 /* Shorts download button position picker options */
 "Remove Frosted Tab Bar" = "Remove Frosted Tab Bar";
+"Shrink Tab Bar When Scrolling" = "Shrink Tab Bar When Scrolling";
 
 /* Sleep timer */
 "Sleep Timer Button" = "Sleep Timer Button";
@@ -812,3 +813,19 @@ Licensed under CC BY-NC-SA 4.0.";
 "via SABR" = "via SABR";
 "Reloads the video when playback fails. Restart YouTube after changing." = "Reloads the video when playback fails. Restart YouTube after changing.";
 "SABR is the default. Use TV Client or Direct if downloads fail." = "SABR is the default. Use TV Client or Direct if downloads fail.";
+"Liquid Glass Tab Bar" = "Liquid Glass Tab Bar";
+"Liquid Glass" = "Liquid Glass";
+"Tab Bar and Top Bar" = "Tab Bar and Top Bar";
+"Menus and Sheets" = "Menus and Sheets";
+"Player Buttons" = "Player Buttons";
+"GLASS" = "GLASS";
+"EXTRAS" = "EXTRAS";
+"Selected Tab Color" = "Selected Tab Color";
+"Text Only" = "Text Only";
+"Text and Icon" = "Text and Icon";
+"Color" = "Color";
+"Top Bar Buttons" = "Top Bar Buttons";
+"YTKACE Toasts and Popups" = "YTKACE Toasts and Popups";
+"Tab bar, menus, toasts, and player" = "Tab bar, menus, toasts, and player";
+"Reload" = "Reload";
+"HLS Streams" = "HLS Streams";

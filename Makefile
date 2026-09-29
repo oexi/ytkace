@@ -56,6 +56,7 @@ YTKACE_FILES = \
 	Tweak/Features/Playback/ProgressBarStyle.mm \
 	Tweak/Features/Streaming/StreamingHooks.mm \
 	Tweak/Features/Streaming/TVClient.mm \
+	Tweak/Features/Streaming/HLSPlayback.mm \
 	Tweak/Features/Shorts/ShortsHooks.mm \
 	Tweak/Features/Shorts/ShortsSessionLimit.mm \
 	Tweak/Features/Shorts/ShortsStartup.mm \
@@ -65,6 +66,9 @@ YTKACE_FILES = \
 	Tweak/Features/Compatibility/CastCompatibility.mm \
 	Tweak/Features/Onboarding/FirstLaunch.mm \
 	Tweak/Features/Navigation/TabBarHooks.mm \
+	Tweak/Features/Navigation/GlassChrome.mm \
+	Tweak/Features/Navigation/GlassSheets.mm \
+	Tweak/Features/Playback/PlayerGlass.mm \
 	Tweak/Features/Navigation/NavigationBehaviorHooks.mm \
 	Tweak/Features/Gestures/PlayerGestures.mm \
 	Tweak/Features/Interface/OverlayVisibilityHooks.mm \

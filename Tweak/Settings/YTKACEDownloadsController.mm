@@ -8,6 +8,7 @@
 #import "../Runtime/Localization.h"
 #import "../UI/Assets.h"
 #import "../UI/Notice.h"
+#import "../UI/OverlayButtonHost.h"
 #import "../Features/Downloads/YTKACEDownloadPlayerController.h"
 #import "../Features/Downloads/YTKACEAudioPlayerController.h"
 #import "../Features/Downloads/MediaArtwork.h"
@@ -726,16 +727,8 @@ static void YTKACEStoreMode(NSString *field, NSInteger segment, NSInteger mode) 
 - (BOOL)presentNativeLibrarySheetWithTitle:(NSString *)title
                                     actions:(NSArray *)actions
                                  sourceView:(UIView *)sourceView {
-    Class sheetClass = NSClassFromString(@"YTDefaultSheetController");
-    SEL factory = NSSelectorFromString(
-        @"sheetControllerWithMessage:subMessage:delegate:parentResponder:"
-    );
-    if (sheetClass == Nil || ![sheetClass respondsToSelector:factory]) {
-        return NO;
-    }
-    id sheet = ((id (*)(id, SEL, id, id, id, id))objc_msgSend)(
-        sheetClass, factory, @"", title, nil, nil
-    );
+    (void)sourceView;
+    id sheet = YTKACEMakeSheet(@"", title);
     if (sheet == nil) return NO;
     @try {
         id header = [sheet valueForKey:@"_headerView"];
@@ -751,25 +744,7 @@ static void YTKACEStoreMode(NSString *field, NSInteger segment, NSInteger mode) 
             ((void (*)(id, SEL, id))objc_msgSend)(sheet, addAction, action);
         }
     }
-    SEL presentFromView = NSSelectorFromString(
-        @"presentFromView:animated:completion:"
-    );
-    SEL presentFromController = NSSelectorFromString(
-        @"presentFromViewController:animated:completion:"
-    );
-    if (YTKACERealUserInterfaceIdiom() == UIUserInterfaceIdiomPad &&
-        [sheet respondsToSelector:presentFromView]) {
-        ((void (*)(id, SEL, id, BOOL, id))objc_msgSend)(
-            sheet, presentFromView, sourceView, YES, nil
-        );
-        return YES;
-    }
-    if ([sheet respondsToSelector:presentFromController]) {
-        ((void (*)(id, SEL, id, BOOL, id))objc_msgSend)(
-            sheet, presentFromController, self, YES, nil
-        );
-        return YES;
-    }
+    if (YTKACEShowSheet(sheet, self)) return YES;
     return NO;
 }
 
@@ -1130,17 +1105,9 @@ didSelectItemAtIndexPath:(NSIndexPath *)indexPath {
 }
 
 - (BOOL)showNativeMenuForURL:(NSURL *)url sourceView:(UIView *)sourceView {
-    Class sheetClass = NSClassFromString(@"YTDefaultSheetController");
-    SEL factory = NSSelectorFromString(
-        @"sheetControllerWithMessage:subMessage:delegate:parentResponder:"
-    );
-    if (sheetClass == Nil || ![sheetClass respondsToSelector:factory]) {
-        return NO;
-    }
+    (void)sourceView;
     NSString *title = url.lastPathComponent.stringByDeletingPathExtension;
-    id sheet = ((id (*)(id, SEL, id, id, id, id))objc_msgSend)(
-        sheetClass, factory, @"", title, nil, nil
-    );
+    id sheet = YTKACEMakeSheet(@"", title);
     if (sheet == nil) {
         return NO;
     }
@@ -1192,23 +1159,7 @@ didSelectItemAtIndexPath:(NSIndexPath *)indexPath {
             ((void (*)(id, SEL, id))objc_msgSend)(sheet, addAction, action);
         }
     }
-    SEL presentFromView = NSSelectorFromString(@"presentFromView:animated:completion:");
-    SEL presentFromController = NSSelectorFromString(
-        @"presentFromViewController:animated:completion:"
-    );
-    if (YTKACERealUserInterfaceIdiom() == UIUserInterfaceIdiomPad &&
-        [sheet respondsToSelector:presentFromView]) {
-        ((void (*)(id, SEL, id, BOOL, id))objc_msgSend)(
-            sheet, presentFromView, sourceView, YES, nil
-        );
-        return YES;
-    }
-    if ([sheet respondsToSelector:presentFromController]) {
-        ((void (*)(id, SEL, id, BOOL, id))objc_msgSend)(
-            sheet, presentFromController, self, YES, nil
-        );
-        return YES;
-    }
+    if (YTKACEShowSheet(sheet, self)) return YES;
     return NO;
 }
 

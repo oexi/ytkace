@@ -693,6 +693,7 @@ CC BY-NC-SA 4.0 라이선스.";
 
 /* Shorts download button position picker options */
 "Remove Frosted Tab Bar" = "하단 탭 바의 반투명 효과 제거";
+"Shrink Tab Bar When Scrolling" = "스크롤 시 탭 바 축소";
 
 /* Sleep timer */
 "Sleep Timer Button" = "수면 타이머 버튼";
@@ -806,3 +807,19 @@ CC BY-NC-SA 4.0 라이선스.";
 "via SABR" = "SABR 사용";
 "Reloads the video when playback fails. Restart YouTube after changing." = "재생에 실패하면 동영상을 다시 불러옵니다. 변경 후 YouTube를 다시 시작하세요.";
 "SABR is the default. Use TV Client or Direct if downloads fail." = "SABR이 기본값입니다. 다운로드가 실패하면 TV Client 또는 Direct를 사용하세요.";
+"Liquid Glass Tab Bar" = "Liquid Glass 탭 막대";
+"Liquid Glass" = "리퀴드 글래스";
+"Tab Bar and Top Bar" = "탭 바 및 상단 바";
+"Menus and Sheets" = "메뉴 및 시트";
+"Player Buttons" = "플레이어 버튼";
+"GLASS" = "글래스";
+"EXTRAS" = "추가 기능";
+"Selected Tab Color" = "선택한 탭 색상";
+"Text Only" = "텍스트만";
+"Text and Icon" = "텍스트와 아이콘";
+"Color" = "색상";
+"Top Bar Buttons" = "상단 바 버튼";
+"YTKACE Toasts and Popups" = "YTKACE 토스트 및 팝업";
+"Tab bar, menus, toasts, and player" = "탭 바, 메뉴, 토스트, 플레이어";
+"Reload" = "새로고침";
+"HLS Streams" = "HLS 스트림";

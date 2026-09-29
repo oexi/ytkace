@@ -693,6 +693,7 @@ Licensed under CC BY-NC-SA 4.0." = "يستخدم YTKACE بيانات SponsorBloc
 
 /* Shorts download button position picker options */
 "Remove Frosted Tab Bar" = "إزالة شريط التبويب المصفر";
+"Shrink Tab Bar When Scrolling" = "تصغير شريط التبويبات عند التمرير";
 
 /* Sleep timer */
 "Sleep Timer Button" = "زر مؤقت النوم";
@@ -806,3 +807,19 @@ Licensed under CC BY-NC-SA 4.0." = "يستخدم YTKACE بيانات SponsorBloc
 "via SABR" = "عبر SABR";
 "Reloads the video when playback fails. Restart YouTube after changing." = "يعيد تحميل الفيديو عند فشل التشغيل. أعد تشغيل YouTube بعد التغيير.";
 "SABR is the default. Use TV Client or Direct if downloads fail." = "SABR هو الافتراضي. استخدم TV Client أو Direct إذا فشلت التنزيلات.";
+"Liquid Glass Tab Bar" = "شريط تبويب Liquid Glass";
+"Liquid Glass" = "Liquid Glass";
+"Tab Bar and Top Bar" = "شريط التبويب والشريط العلوي";
+"Menus and Sheets" = "القوائم والأوراق";
+"Player Buttons" = "أزرار المشغل";
+"GLASS" = "الزجاج";
+"EXTRAS" = "إضافات";
+"Selected Tab Color" = "لون التبويب المحدد";
+"Text Only" = "النص فقط";
+"Text and Icon" = "النص والأيقونة";
+"Color" = "اللون";
+"Top Bar Buttons" = "أزرار الشريط العلوي";
+"YTKACE Toasts and Popups" = "إشعارات ونوافذ YTKACE المنبثقة";
+"Tab bar, menus, toasts, and player" = "شريط التبويبات والقوائم والإشعارات المنبثقة والمشغل";
+"Reload" = "إعادة التحميل";
+"HLS Streams" = "بث HLS";

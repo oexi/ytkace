@@ -693,6 +693,7 @@ Na licencji CC BY-NC-SA 4.0.";
 
 /* Shorts download button position picker options */
 "Remove Frosted Tab Bar" = "Usuń matowy pasek kart";
+"Shrink Tab Bar When Scrolling" = "Zmniejszaj pasek kart podczas przewijania";
 
 /* Sleep timer */
 "Sleep Timer Button" = "Przycisk licznika usypiania";
@@ -806,3 +807,19 @@ Na licencji CC BY-NC-SA 4.0.";
 "via SABR" = "przez SABR";
 "Reloads the video when playback fails. Restart YouTube after changing." = "Wczytuje film ponownie, gdy odtwarzanie się nie powiedzie. Po zmianie uruchom ponownie YouTube.";
 "SABR is the default. Use TV Client or Direct if downloads fail." = "SABR jest domyślny. Użyj TV Client lub Direct, jeśli pobieranie się nie udaje.";
+"Liquid Glass Tab Bar" = "Pasek kart Liquid Glass";
+"Liquid Glass" = "Liquid Glass";
+"Tab Bar and Top Bar" = "Pasek kart i górny pasek";
+"Menus and Sheets" = "Menu i arkusze";
+"Player Buttons" = "Przyciski odtwarzacza";
+"GLASS" = "SZKŁO";
+"EXTRAS" = "DODATKI";
+"Selected Tab Color" = "Kolor wybranej karty";
+"Text Only" = "Tylko tekst";
+"Text and Icon" = "Tekst i ikona";
+"Color" = "Kolor";
+"Top Bar Buttons" = "Przyciski górnego paska";
+"YTKACE Toasts and Popups" = "Komunikaty i okienka YTKACE";
+"Tab bar, menus, toasts, and player" = "Pasek kart, menu, komunikaty i odtwarzacz";
+"Reload" = "Przeładuj";
+"HLS Streams" = "Strumienie HLS";

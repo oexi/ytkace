@@ -95,7 +95,7 @@ static BOOL YTKACESpeedMenuStyle(void) {
 }
 
 static BOOL YTKACERateCeilingRaised(void) {
-    return YTKACEFeatureEnabled(YTKACESpeedKey) || YTKACEStartPlaybackRate() > 2.0;
+    return YES;
 }
 
 static BOOL YTKACEDeliverRate(id target, NSString *name, double rate) {
@@ -707,6 +707,50 @@ static id YTKACEVarispeedInit(id receiver, SEL selector) {
     }
     if (options.count != 0) [controller setValue:[options copy] forKey:@"_options"];
     return controller;
+}
+
+static id YTKACESpeedValue(id object, NSString *name) {
+    SEL selector = NSSelectorFromString(name);
+    return [object respondsToSelector:selector] ? ((id (*)(id, SEL))objc_msgSend)(object, selector) : nil;
+}
+
+void YTKACERouteSpeedMenuItem(id renderers, id actions, UIView *view, id responder) {
+    SEL open = NSSelectorFromString(@"didPressVarispeed:");
+    SEL extensionSelector = NSSelectorFromString(@"messageForFieldNumber:");
+    if (![renderers isKindOfClass:NSArray.class] || ![actions isKindOfClass:NSArray.class] ||
+        ![responder respondsToSelector:open]) {
+        return;
+    }
+    NSArray *items = renderers;
+    NSArray *built = actions;
+    for (NSUInteger index = 0; index < items.count && index < built.count; index++) {
+        id options = YTKACESpeedValue(YTKACESpeedValue(items[index], @"elementRenderer"), @"compatibilityOptions");
+        if (![options respondsToSelector:extensionSelector]) continue;
+        id extension = ((id (*)(id, SEL, NSUInteger))objc_msgSend)(options, extensionSelector, 396644439);
+        id identifier = YTKACESpeedValue(extension, @"menuItemIdentifier");
+        if (![identifier isKindOfClass:NSString.class] ||
+            ![identifier isEqualToString:@"menu_item_playback_speed"]) {
+            continue;
+        }
+        id action = built[index];
+        SEL setHandler = NSSelectorFromString(@"setHandler:");
+        if (![action respondsToSelector:setHandler]) return;
+        __weak id weakResponder = responder;
+        __weak UIView *weakView = view;
+        dispatch_block_t handler = ^{
+            id target = weakResponder;
+            if ([target respondsToSelector:open]) {
+                ((void (*)(id, SEL, id))objc_msgSend)(target, open, weakView);
+            }
+        };
+        ((void (*)(id, SEL, id))objc_msgSend)(action, setHandler, handler);
+        @try {
+            UIView *elementView = [YTKACESpeedValue(action, @"button") valueForKey:@"_elementView"];
+            if ([elementView isKindOfClass:UIView.class]) elementView.userInteractionEnabled = NO;
+        } @catch (__unused NSException *exception) {
+        }
+        return;
+    }
 }
 
 void YTKACEInstallSpeedHooks(void) {

@@ -1,4 +1,5 @@
 #import "GlobalDownloadMiniPlayer.h"
+#import "../../YTKACE.h"
 #import "MediaArtwork.h"
 #import "YTKACEAudioPlayerController.h"
 #import "YTKACEDownloadPlayerController.h"
@@ -26,8 +27,14 @@ static NSString * const YTKACEMiniCornerKey = @"YTKACE.Library.MiniPlayerCorner"
     CGFloat height = CGRectGetHeight(self.bounds);
     [[UIColor colorWithWhite:1.0 alpha:0.3] setFill];
     UIRectFill(self.bounds);
-    [UIColor.systemRedColor setFill];
-    UIRectFill(CGRectMake(0.0, 0.0, width * MAX(0.0, MIN(1.0, self.progress)), height));
+    CGFloat playedWidth = width * MAX(0.0, MIN(1.0, self.progress));
+    if (playedWidth > 0.0) {
+        CGContextRef context = UIGraphicsGetCurrentContext();
+        CGContextSaveGState(context);
+        UIRectClip(CGRectMake(0.0, 0.0, playedWidth, height));
+        [YTKACEProgressFillImage(width, height) drawInRect:CGRectMake(0.0, 0.0, width, height)];
+        CGContextRestoreGState(context);
+    }
     if (!isfinite(self.duration) || self.duration <= 0.0 || !YTKACESponsorBlockEnabled()) {
         return;
     }

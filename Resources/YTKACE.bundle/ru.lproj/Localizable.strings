@@ -693,6 +693,7 @@ Licensed under CC BY-NC-SA 4.0." = "YTKACE использует данные Spo
 
 /* Shorts download button position picker options */
 "Remove Frosted Tab Bar" = "Убрать матовую панель вкладок";
+"Shrink Tab Bar When Scrolling" = "Сжимать панель вкладок при прокрутке";
 
 /* Sleep timer */
 "Sleep Timer Button" = "Кнопка таймера сна";
@@ -806,3 +807,19 @@ Licensed under CC BY-NC-SA 4.0." = "YTKACE использует данные Spo
 "via SABR" = "через SABR";
 "Reloads the video when playback fails. Restart YouTube after changing." = "Перезагружает видео при сбое воспроизведения. Перезапустите YouTube после изменения.";
 "SABR is the default. Use TV Client or Direct if downloads fail." = "SABR используется по умолчанию. Если загрузки не работают, выберите TV Client или Direct.";
+"Liquid Glass Tab Bar" = "Панель вкладок Liquid Glass";
+"Liquid Glass" = "Liquid Glass";
+"Tab Bar and Top Bar" = "Панель вкладок и верхняя панель";
+"Menus and Sheets" = "Меню и листы";
+"Player Buttons" = "Кнопки плеера";
+"GLASS" = "СТЕКЛО";
+"EXTRAS" = "ДОПОЛНИТЕЛЬНО";
+"Selected Tab Color" = "Цвет выбранной вкладки";
+"Text Only" = "Только текст";
+"Text and Icon" = "Текст и значок";
+"Color" = "Цвет";
+"Top Bar Buttons" = "Кнопки верхней панели";
+"YTKACE Toasts and Popups" = "Уведомления и окна YTKACE";
+"Tab bar, menus, toasts, and player" = "Панель вкладок, меню, уведомления и плеер";
+"Reload" = "Перезагрузка";
+"HLS Streams" = "Потоки HLS";

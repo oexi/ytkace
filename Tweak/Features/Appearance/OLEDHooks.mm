@@ -187,6 +187,7 @@ static void YTKACEQualitySheetDidAppear(id receiver, SEL selector, BOOL animated
     }
     if (![receiver isKindOfClass:UIViewController.class] ||
         !YTKACEOLEDActive(((UIViewController *)receiver).traitCollection)) return;
+    if (YTKACELiquidGlassAvailable() && YTKACEFeatureEnabled(@"YTKACE.Preference.Glass.Menus")) return;
     UIView *root = ((UIViewController *)receiver).view;
     dispatch_async(dispatch_get_main_queue(), ^{
         NSMutableArray<UILabel *> *labels = [NSMutableArray array];

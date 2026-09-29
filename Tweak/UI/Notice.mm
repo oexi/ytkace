@@ -1,7 +1,51 @@
 #import "Notice.h"
+#import "../YTKACE.h"
+#import "../Runtime/Preferences.h"
 
 #import <UIKit/UIKit.h>
 #import <objc/message.h>
+#import <objc/runtime.h>
+
+static const void *YTKACENoticeGlassAssociation = &YTKACENoticeGlassAssociation;
+
+BOOL YTKACEApplyGlassBackground(UIView *view, BOOL dark) {
+    UIVisualEffectView *glass = objc_getAssociatedObject(view, YTKACENoticeGlassAssociation);
+    BOOL wanted = view != nil && YTKACELiquidGlassAvailable() &&
+        YTKACEFeatureEnabled(@"YTKACE.Preference.Glass.Notices");
+    if (!wanted) {
+        [glass removeFromSuperview];
+        return NO;
+    }
+    if (glass == nil) {
+        Class effectClass = NSClassFromString(@"UIGlassEffect");
+        SEL styleSelector = NSSelectorFromString(@"effectWithStyle:");
+        UIVisualEffect *effect = [effectClass respondsToSelector:styleSelector]
+            ? ((id (*)(id, SEL, NSInteger))objc_msgSend)(effectClass, styleSelector, 0)
+            : [effectClass new];
+        if (effect == nil) return NO;
+        glass = [[UIVisualEffectView alloc] initWithEffect:effect];
+        glass.userInteractionEnabled = NO;
+        glass.translatesAutoresizingMaskIntoConstraints = NO;
+        glass.layer.cornerCurve = kCACornerCurveContinuous;
+        objc_setAssociatedObject(view, YTKACENoticeGlassAssociation, glass, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+    if (glass.superview != view) {
+        [view insertSubview:glass atIndex:0];
+        [NSLayoutConstraint activateConstraints:@[
+            [glass.topAnchor constraintEqualToAnchor:view.topAnchor],
+            [glass.bottomAnchor constraintEqualToAnchor:view.bottomAnchor],
+            [glass.leadingAnchor constraintEqualToAnchor:view.leadingAnchor],
+            [glass.trailingAnchor constraintEqualToAnchor:view.trailingAnchor]
+        ]];
+    } else {
+        [view sendSubviewToBack:glass];
+    }
+    glass.layer.cornerRadius = view.layer.cornerRadius;
+    view.backgroundColor = UIColor.clearColor;
+    view.layer.shadowOpacity = 0.0;
+    if (dark) view.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
+    return YES;
+}
 
 BOOL YTKACEShowYouTubeDialog(NSString *title, NSString *message) {
     Class alertClass = NSClassFromString(@"YTAlertView");
@@ -112,6 +156,7 @@ void YTKACEShowNotice(NSString *message) {
         label.numberOfLines = 0;
         label.translatesAutoresizingMaskIntoConstraints = NO;
         [banner addSubview:label];
+        YTKACEApplyGlassBackground(banner, YES);
         [host addSubview:banner];
         UILayoutGuide *safe = host.safeAreaLayoutGuide;
         [NSLayoutConstraint activateConstraints:@[

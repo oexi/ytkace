@@ -1,4 +1,5 @@
 #import "DownloadCoordinator.h"
+#import "../../UI/OverlayButtonHost.h"
 #import "../../YTKACE.h"
 #import "DownloadLog.h"
 #import "DownloadSponsor.h"
@@ -446,25 +447,14 @@ void YTKACESaveVideoToPhotosFile(NSURL *url,
         responder = responder.nextResponder;
     }
     presenter = sourceController ?: presenter;
-    Class sheetClass = NSClassFromString(@"YTDefaultSheetController");
     Class actionClass = NSClassFromString(@"YTActionSheetAction");
-    SEL makeSheet = NSSelectorFromString(
-        @"sheetControllerWithMessage:subMessage:delegate:parentResponder:");
     SEL makeDetailed = NSSelectorFromString(
         @"actionWithTitle:iconImage:secondaryIconImage:accessibilityIdentifier:handler:");
     SEL makeSimple = NSSelectorFromString(@"actionWithTitle:iconImage:style:handler:");
-    if (sheetClass != Nil && actionClass != Nil &&
-        [sheetClass respondsToSelector:makeSheet]) {
-        id sheet = nil;
-        SEL makePlain = NSSelectorFromString(@"sheetControllerWithParentResponder:");
-        if (title.length == 0 && subtitle.length == 0 &&
-            [sheetClass respondsToSelector:makePlain]) {
-            sheet = ((id (*)(id, SEL, id))objc_msgSend)(
-                sheetClass, makePlain, nil);
-        } else {
-            sheet = ((id (*)(id, SEL, id, id, id, id))objc_msgSend)(
-                sheetClass, makeSheet, title, subtitle, nil, nil);
-        }
+    id sheet = actionClass != Nil
+        ? YTKACEMakeSheet(title.length != 0 ? title : nil, subtitle.length != 0 ? subtitle : nil)
+        : nil;
+    if (sheet != nil) {
         if (title.length != 0 || subtitle.length != 0) {
             @try {
                 id header = [sheet valueForKey:@"_headerView"];
@@ -493,18 +483,7 @@ void YTKACESaveVideoToPhotosFile(NSURL *url,
                     sheet, NSSelectorFromString(@"addAction:"), action);
             }
         }
-        SEL presentFromView =
-            NSSelectorFromString(@"presentFromView:animated:completion:");
-        if (YTKACERealUserInterfaceIdiom() == UIUserInterfaceIdiomPad &&
-            sourceView != nil && [sheet respondsToSelector:presentFromView]) {
-            ((void (*)(id, SEL, id, BOOL, id))objc_msgSend)(
-                sheet, presentFromView, sourceView, YES, nil);
-        } else if ([sheet respondsToSelector:
-                    NSSelectorFromString(@"presentFromViewController:animated:completion:")]) {
-            ((void (*)(id, SEL, id, BOOL, id))objc_msgSend)(
-                sheet, NSSelectorFromString(@"presentFromViewController:animated:completion:"),
-                presenter, YES, nil);
-        }
+        YTKACEShowSheet(sheet, presenter);
         return;
     }
     [self showCompactNotice:YTKACELocalized(@"YouTube menu unavailable")];

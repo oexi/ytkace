@@ -395,15 +395,32 @@ static UIViewController *YTKACESheetPresenter(UIView *sourceView) {
     return nil;
 }
 
+id YTKACEMakeSheet(NSString *title, NSString *subtitle) {
+    Class sheetClass = NSClassFromString(@"YTDefaultSheetController");
+    if (sheetClass == Nil) return nil;
+    SEL init = NSSelectorFromString(
+        @"initWithSheetStyle:headerTitle:headerSubtitle:shouldDisableLogging:delegate:parentResponder:");
+    if ([sheetClass instancesRespondToSelector:init]) {
+        return ((id (*)(id, SEL, NSInteger, id, id, BOOL, id, id))objc_msgSend)(
+            [sheetClass alloc], init, 2, title, subtitle, NO, nil, nil);
+    }
+    SEL makeSheet = NSSelectorFromString(@"sheetControllerWithMessage:subMessage:delegate:parentResponder:");
+    if (![sheetClass respondsToSelector:makeSheet]) return nil;
+    return ((id (*)(id, SEL, id, id, id, id))objc_msgSend)(sheetClass, makeSheet, title, subtitle, nil, nil);
+}
+
+BOOL YTKACEShowSheet(id sheet, UIViewController *presenter) {
+    SEL present = NSSelectorFromString(@"presentFromViewController:animated:completion:");
+    if (sheet == nil || presenter == nil || ![sheet respondsToSelector:present]) return NO;
+    ((void (*)(id, SEL, id, BOOL, id))objc_msgSend)(sheet, present, presenter, YES, nil);
+    return YES;
+}
+
 void YTKACEPresentNativeSheet(NSString *title,
                               NSString *subtitle,
                               UIView *sourceView,
                               NSArray<NSDictionary *> *actions) {
-    Class sheetClass = NSClassFromString(@"YTDefaultSheetController");
     Class actionClass = NSClassFromString(@"YTActionSheetAction");
-    SEL makeSheet = NSSelectorFromString(
-        @"sheetControllerWithMessage:subMessage:delegate:parentResponder:");
-    SEL makePlain = NSSelectorFromString(@"sheetControllerWithParentResponder:");
     SEL makeSimple = NSSelectorFromString(@"actionWithTitle:iconImage:style:handler:");
     SEL makeDetailed = NSSelectorFromString(
         @"actionWithTitle:iconImage:secondaryIconImage:accessibilityIdentifier:handler:");
@@ -415,18 +432,11 @@ void YTKACEPresentNativeSheet(NSString *title,
     SEL makeSubtitled = NSSelectorFromString(
         @"actionWithTitle:subtitle:iconImage:accessibilityIdentifier:handler:");
     SEL addAction = NSSelectorFromString(@"addAction:");
-    if (sheetClass == Nil || actionClass == Nil ||
+    if (actionClass == Nil ||
         ![actionClass respondsToSelector:makeSimple]) {
         return;
     }
-    id sheet = nil;
-    if (title.length == 0 && subtitle.length == 0 &&
-        [sheetClass respondsToSelector:makePlain]) {
-        sheet = ((id (*)(id, SEL, id))objc_msgSend)(sheetClass, makePlain, nil);
-    } else if ([sheetClass respondsToSelector:makeSheet]) {
-        sheet = ((id (*)(id, SEL, id, id, id, id))objc_msgSend)(
-            sheetClass, makeSheet, title, subtitle, nil, nil);
-    }
+    id sheet = YTKACEMakeSheet(title.length != 0 ? title : nil, subtitle.length != 0 ? subtitle : nil);
     if (sheet == nil || ![sheet respondsToSelector:addAction]) return;
 
     for (NSDictionary *item in actions) {
@@ -466,18 +476,5 @@ void YTKACEPresentNativeSheet(NSString *title,
         }
     }
 
-    SEL presentFromView = NSSelectorFromString(@"presentFromView:animated:completion:");
-    SEL presentFromController =
-        NSSelectorFromString(@"presentFromViewController:animated:completion:");
-    if (YTKACERealUserInterfaceIdiom() == UIUserInterfaceIdiomPad &&
-        sourceView != nil && [sheet respondsToSelector:presentFromView]) {
-        ((void (*)(id, SEL, id, BOOL, id))objc_msgSend)(
-            sheet, presentFromView, sourceView, YES, nil);
-        return;
-    }
-    id presenter = YTKACESheetPresenter(sourceView);
-    if (presenter != nil && [sheet respondsToSelector:presentFromController]) {
-        ((void (*)(id, SEL, id, BOOL, id))objc_msgSend)(
-            sheet, presentFromController, presenter, YES, nil);
-    }
+    YTKACEShowSheet(sheet, YTKACESheetPresenter(sourceView));
 }

@@ -6,7 +6,7 @@
 #import <objc/message.h>
 
 static IMP OriginalShowShareSheet;
-static IMP OriginalShareButtonSendAction;
+static IMP OriginalShareEntityExecute;
 
 static id YTKACEShareValue(id object, NSString *name) {
     SEL selector = NSSelectorFromString(name);
@@ -54,138 +54,80 @@ static id YTKACEShareExtension(id object, id descriptor) {
     return ((id (*)(id, SEL, id))objc_msgSend)(object, get, descriptor);
 }
 
-static NSData *YTKACEShareFieldData(id fields, NSInteger number) {
-    if (fields == nil) return nil;
-    SEL has = NSSelectorFromString(@"hasField:");
-    SEL get = NSSelectorFromString(@"getField:");
-    if (![fields respondsToSelector:has] ||
-        ![fields respondsToSelector:get] ||
-        !((BOOL (*)(id, SEL, NSInteger))objc_msgSend)(fields, has, number)) {
-        return nil;
-    }
-    id field = ((id (*)(id, SEL, NSInteger))objc_msgSend)(
-        fields, get, number);
-    NSArray *values = YTKACEShareValue(field, @"lengthDelimitedList");
-    id value = values.count == 1 ? values.firstObject : nil;
-    return [value isKindOfClass:NSData.class] ? value : nil;
-}
-
-static NSString *YTKACEShareFieldFromDescription(id fields, NSInteger number) {
-    if (fields == nil) return nil;
-    NSString *pattern = [NSString stringWithFormat:@"\\b%ld: \"([^\"]+)\"",
-                         (long)number];
-    NSRegularExpression *expression = [NSRegularExpression
-        regularExpressionWithPattern:pattern options:0 error:nil];
-    NSString *description = [fields description];
-    NSTextCheckingResult *match = [expression
-        firstMatchInString:description options:0
-        range:NSMakeRange(0, description.length)];
-    return match.numberOfRanges > 1
-        ? [description substringWithRange:[match rangeAtIndex:1]] : nil;
-}
-
-static NSString *YTKACEShareFieldString(id fields, NSInteger number) {
-    NSData *data = YTKACEShareFieldData(fields, number);
-    if (data.length != 0) {
-        return [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
-    }
-    return YTKACEShareFieldFromDescription(fields, number);
-}
-
-static id YTKACEShareUnknownFields(id message) {
-    if (message == nil) return nil;
-    Class unknownClass = NSClassFromString(@"GPBUnknownFields");
-    SEL initializer = NSSelectorFromString(@"initFromMessage:");
-    if (unknownClass != Nil &&
-        [unknownClass instancesRespondToSelector:initializer]) {
-        id unknown = ((id (*)(id, SEL, id))objc_msgSend)(
-            [unknownClass alloc], initializer, message);
-        if (unknown != nil) return unknown;
-    }
-    return YTKACEShareValue(message, @"unknownFields");
-}
-
-static id YTKACEParseShareMessage(NSData *data) {
-    Class messageClass = NSClassFromString(@"GPBMessage");
-    SEL parse = NSSelectorFromString(@"parseFromData:error:");
-    if (messageClass == Nil || ![messageClass respondsToSelector:parse]) return nil;
-    NSError *error = nil;
-    return ((id (*)(id, SEL, id, NSError **))objc_msgSend)(
-        messageClass, parse, data, &error);
-}
-
-static NSURL *YTKACEShareURL(id fields) {
-    NSData *clipData = YTKACEShareFieldData(fields, 8);
-    if (clipData.length != 0) {
-        id clip = YTKACEParseShareMessage(clipData);
-        NSString *clipID = YTKACEShareFieldString(
-            YTKACEShareUnknownFields(clip), 1);
-        if (clipID.length != 0) {
-            return [NSURL URLWithString:
-                [NSString stringWithFormat:@"https://youtube.com/clip/%@",
-                                                   clipID]];
+static BOOL YTKACEShareVarint(const uint8_t *bytes, NSUInteger length, NSUInteger *offset, uint64_t *value) {
+    uint64_t result = 0;
+    for (NSUInteger shift = 0; shift < 64 && *offset < length; shift += 7) {
+        uint8_t byte = bytes[(*offset)++];
+        result |= (uint64_t)(byte & 0x7f) << shift;
+        if ((byte & 0x80) == 0) {
+            *value = result;
+            return YES;
         }
     }
-    NSString *channelID = YTKACEShareFieldString(fields, 3);
-    if (channelID.length != 0) {
-        return [NSURL URLWithString:
-            [NSString stringWithFormat:@"https://youtube.com/channel/%@",
-                                               channelID]];
-    }
-    NSString *playlistID = YTKACEShareFieldString(fields, 2);
-    if (playlistID.length != 0) {
-        NSString *suffix = ([playlistID hasPrefix:@"PL"] ||
-                            [playlistID hasPrefix:@"FL"])
-            ? @"" : @"&playnext=1";
-        return [NSURL URLWithString:
-            [NSString stringWithFormat:@"https://youtube.com/playlist?list=%@%@",
-                                               playlistID, suffix]];
-    }
-    NSString *videoID = YTKACEShareFieldString(fields, 1);
-    if (videoID.length != 0) {
-        return [NSURL URLWithString:
-            [NSString stringWithFormat:@"https://youtube.com/watch?v=%@",
-                                               videoID]];
-    }
-    return nil;
+    return NO;
 }
 
-static NSArray<NSData *> *YTKACEShareLengthDelimitedValues(id field) {
-    NSMutableArray<NSData *> *result = [NSMutableArray array];
-    for (NSString *selectorName in @[@"lengthDelimitedList",
-                                     @"lengthDelimited"]) {
-        id value = YTKACEShareValue(field, selectorName);
-        if ([value isKindOfClass:NSData.class]) {
-            [result addObject:value];
-        } else if ([value isKindOfClass:NSArray.class]) {
-            for (id item in value) {
-                if ([item isKindOfClass:NSData.class]) [result addObject:item];
+static NSDictionary<NSNumber *, NSData *> *YTKACEShareFields(NSData *data) {
+    NSMutableDictionary<NSNumber *, NSData *> *fields = [NSMutableDictionary dictionary];
+    const uint8_t *bytes = (const uint8_t *)data.bytes;
+    NSUInteger length = data.length;
+    NSUInteger offset = 0;
+    while (offset < length) {
+        uint64_t key = 0;
+        if (!YTKACEShareVarint(bytes, length, &offset, &key)) break;
+        NSNumber *number = @(key >> 3);
+        switch (key & 7) {
+            case 0: {
+                uint64_t value = 0;
+                if (!YTKACEShareVarint(bytes, length, &offset, &value)) return fields;
+                if (fields[number] == nil) fields[number] = [NSData data];
+                break;
             }
+            case 2: {
+                uint64_t size = 0;
+                if (!YTKACEShareVarint(bytes, length, &offset, &size) || size > length - offset) return fields;
+                if (fields[number] == nil) fields[number] = [NSData dataWithBytes:bytes + offset length:(NSUInteger)size];
+                offset += (NSUInteger)size;
+                break;
+            }
+            case 1: offset += 8; break;
+            case 5: offset += 4; break;
+            default: return fields;
         }
     }
-    return result;
+    return fields;
 }
 
-static NSArray *YTKACEShareFieldsArray(id unknown) {
-    id fields = YTKACEShareValue(unknown, @"fields");
-    if ([fields isKindOfClass:NSArray.class]) return fields;
-    return [unknown isKindOfClass:NSArray.class] ? unknown : @[];
+static NSString *YTKACEShareText(NSData *data) {
+    if (data.length == 0) return nil;
+    NSString *text = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+    return text.length != 0 ? text : nil;
 }
 
-static NSURL *YTKACEShareRecursiveURL(id message, NSUInteger depth) {
-    if (message == nil || depth > 4) return nil;
-    id unknown = YTKACEShareUnknownFields(message);
-    NSURL *URL = YTKACEShareURL(unknown);
-    if (URL != nil) return URL;
-
-    for (id field in YTKACEShareFieldsArray(unknown)) {
-        for (NSData *data in YTKACEShareLengthDelimitedValues(field)) {
-            id nested = YTKACEParseShareMessage(data);
-            URL = YTKACEShareRecursiveURL(nested, depth + 1);
-            if (URL != nil) return URL;
-        }
+static NSURL *YTKACEShareEntityURL(NSString *serialized) {
+    if (serialized.length == 0) return nil;
+    NSString *text = [serialized stringByRemovingPercentEncoding] ?: serialized;
+    text = [[text stringByReplacingOccurrencesOfString:@"-" withString:@"+"]
+        stringByReplacingOccurrencesOfString:@"_" withString:@"/"];
+    while (text.length % 4 != 0) text = [text stringByAppendingString:@"="];
+    NSData *data = [[NSData alloc] initWithBase64EncodedString:text options:0];
+    if (data.length == 0) return nil;
+    NSDictionary<NSNumber *, NSData *> *fields = YTKACEShareFields(data);
+    NSString *clipID = YTKACEShareText(YTKACEShareFields(fields[@8])[@1]);
+    if (clipID != nil) return [NSURL URLWithString:[@"https://youtube.com/clip/" stringByAppendingString:clipID]];
+    NSString *channelID = YTKACEShareText(fields[@3]);
+    if (channelID != nil) return [NSURL URLWithString:[@"https://youtube.com/channel/" stringByAppendingString:channelID]];
+    NSString *postID = YTKACEShareText(fields[@6]);
+    if (postID != nil) return [NSURL URLWithString:[@"https://youtube.com/post/" stringByAppendingString:postID]];
+    NSString *playlistID = YTKACEShareText(fields[@2]);
+    if (playlistID != nil) {
+        NSString *suffix = [playlistID hasPrefix:@"PL"] || [playlistID hasPrefix:@"FL"] ? @"" : @"&playnext=1";
+        return [NSURL URLWithString:[NSString stringWithFormat:@"https://youtube.com/playlist?list=%@%@", playlistID, suffix]];
     }
-    return nil;
+    NSString *videoID = YTKACEShareText(fields[@1]);
+    if (videoID == nil) return nil;
+    NSString *format = fields[@10] != nil ? @"https://youtube.com/shorts/%@" : @"https://youtube.com/watch?v=%@";
+    return [NSURL URLWithString:[NSString stringWithFormat:format, videoID]];
 }
 
 static UIViewController *YTKACESharePresenter(void) {
@@ -222,8 +164,9 @@ static UIViewController *YTKACESharePresenter(void) {
     return controller;
 }
 
-static void YTKACEPresentNativeShare(NSURL *URL) {
+static void YTKACEPresentNativeShare(NSURL *URL, UIView *source) {
     if (URL == nil) return;
+    __weak UIView *weakSource = source;
     dispatch_async(dispatch_get_main_queue(), ^{
         UIViewController *presenter = YTKACESharePresenter();
         if (presenter == nil) return;
@@ -236,32 +179,35 @@ static void YTKACEPresentNativeShare(NSURL *URL) {
         ];
         UIPopoverPresentationController *popover = sheet.popoverPresentationController;
         if (popover != nil) {
-            popover.sourceView = presenter.view;
-            popover.sourceRect = CGRectMake(
-                CGRectGetMidX(presenter.view.bounds),
-                CGRectGetMidY(presenter.view.bounds), 1.0, 1.0);
-            popover.permittedArrowDirections = 0;
+            UIView *anchor = weakSource;
+            if (anchor.window != nil) {
+                popover.sourceView = anchor;
+                popover.sourceRect = anchor.bounds;
+            } else {
+                popover.sourceView = presenter.view;
+                popover.sourceRect = CGRectMake(
+                    CGRectGetMidX(presenter.view.bounds),
+                    CGRectGetMidY(presenter.view.bounds), 1.0, 1.0);
+                popover.permittedArrowDirections = 0;
+            }
         }
         [presenter presentViewController:sheet animated:YES completion:nil];
     });
 }
 
-static void YTKACEShareButtonSendAction(UIControl *receiver, SEL selector,
-                                        SEL action, id target, UIEvent *event) {
-    NSString *identifier = receiver.accessibilityIdentifier.lowercaseString;
-    if (YTKACEFeatureEnabled(@"YTKACE.Preference.Sharing.NativeSheet") &&
-        [identifier containsString:@"share.button"]) {
-        NSString *videoID = YTKACELastVideoID();
-        if (videoID.length != 0) {
-            NSURL *URL = [NSURL URLWithString:[NSString stringWithFormat:
-                @"https://youtube.com/watch?v=%@", videoID]];
-            YTKACEPresentNativeShare(URL);
+static void YTKACEShareEntityExecute(id receiver, SEL selector, id command,
+                                     id entry, UIView *fromView, id sender) {
+    if (YTKACEFeatureEnabled(@"YTKACE.Preference.Sharing.NativeSheet")) {
+        NSString *serialized = YTKACESerializedShareEntity(command, nil, nil);
+        NSURL *URL = YTKACEShareEntityURL(serialized);
+        if (URL != nil) {
+            YTKACEPresentNativeShare(URL, fromView);
             return;
         }
     }
-    if (OriginalShareButtonSendAction != NULL) {
-        ((void (*)(id, SEL, SEL, id, id))OriginalShareButtonSendAction)(
-            receiver, selector, action, target, event);
+    if (OriginalShareEntityExecute != NULL) {
+        ((void (*)(id, SEL, id, id, id, id))OriginalShareEntityExecute)(
+            receiver, selector, command, entry, fromView, sender);
     }
 }
 
@@ -269,6 +215,7 @@ static void YTKACEShowShareSheet(id receiver, SEL selector,
                                  id context, id handler) {
     BOOL enabled = YTKACEFeatureEnabled(@"YTKACE.Preference.Sharing.NativeSheet");
     BOOL hasOnAppear = YTKACEShareBool(receiver, @"hasOnAppear");
+
     if (!enabled || !hasOnAppear) {
         if (OriginalShowShareSheet != NULL) {
             ((void (*)(id, SEL, id, id))OriginalShowShareSheet)(
@@ -298,20 +245,7 @@ static void YTKACEShowShareSheet(id receiver, SEL selector,
         }
         return;
     }
-    Class messageClass = NSClassFromString(@"GPBMessage");
-    SEL deserialize = NSSelectorFromString(@"deserializeFromString:");
-    id message = (serialized.length != 0 &&
-                  [messageClass respondsToSelector:deserialize])
-        ? ((id (*)(id, SEL, id))objc_msgSend)(
-            messageClass, deserialize, serialized) : nil;
-    NSURL *URL = YTKACEShareRecursiveURL(message, 0);
-    if (URL == nil) {
-        NSString *videoID = YTKACELastVideoID();
-        if (videoID.length != 0) {
-            URL = [NSURL URLWithString:[NSString stringWithFormat:
-                @"https://youtube.com/watch?v=%@", videoID]];
-        }
-    }
+    NSURL *URL = YTKACEShareEntityURL(serialized);
     if (URL == nil) {
         if (OriginalShowShareSheet != NULL) {
             ((void (*)(id, SEL, id, id))OriginalShowShareSheet)(
@@ -319,7 +253,7 @@ static void YTKACEShowShareSheet(id receiver, SEL selector,
         }
         return;
     }
-    YTKACEPresentNativeShare(URL);
+    YTKACEPresentNativeShare(URL, nil);
 }
 
 void YTKACEInstallNativeShareHooks(void) {
@@ -328,7 +262,8 @@ void YTKACEInstallNativeShareHooks(void) {
         @"executeWithCommandContext:handler:",
         (IMP)YTKACEShowShareSheet,
         &OriginalShowShareSheet);
-    YTKACEInstallInstanceHook(@"YTQTMButton", @"sendAction:to:forEvent:",
-                              (IMP)YTKACEShareButtonSendAction,
-                              &OriginalShareButtonSendAction);
+    YTKACEInstallInstanceHook(@"YTShareEntityEndpointCommandHandler",
+                              @"executeWithCommand:entry:fromView:sender:",
+                              (IMP)YTKACEShareEntityExecute,
+                              &OriginalShareEntityExecute);
 }

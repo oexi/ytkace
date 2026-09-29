@@ -693,6 +693,7 @@ Sous licence CC BY-NC-SA 4.0.";
 
 /* Shorts download button position picker options */
 "Remove Frosted Tab Bar" = "Supprimer la barre d'onglets givrée";
+"Shrink Tab Bar When Scrolling" = "Réduire la barre d'onglets au défilement";
 
 /* Sleep timer */
 "Sleep Timer Button" = "Bouton minuteur de sommeil";
@@ -806,3 +807,19 @@ Sous licence CC BY-NC-SA 4.0.";
 "via SABR" = "via SABR";
 "Reloads the video when playback fails. Restart YouTube after changing." = "Recharge la vidéo quand la lecture échoue. Redémarrez YouTube après modification.";
 "SABR is the default. Use TV Client or Direct if downloads fail." = "SABR est l’option par défaut. Utilisez TV Client ou Direct si les téléchargements échouent.";
+"Liquid Glass Tab Bar" = "Barre d’onglets Liquid Glass";
+"Liquid Glass" = "Liquid Glass";
+"Tab Bar and Top Bar" = "Barre d’onglets et barre supérieure";
+"Menus and Sheets" = "Menus et feuilles";
+"Player Buttons" = "Boutons du lecteur";
+"GLASS" = "VERRE";
+"EXTRAS" = "EXTRAS";
+"Selected Tab Color" = "Couleur de l'onglet sélectionné";
+"Text Only" = "Texte seul";
+"Text and Icon" = "Texte et icône";
+"Color" = "Couleur";
+"Top Bar Buttons" = "Boutons de la barre supérieure";
+"YTKACE Toasts and Popups" = "Notifications et fenêtres YTKACE";
+"Tab bar, menus, toasts, and player" = "Barre d'onglets, menus, notifications et lecteur";
+"Reload" = "Recharger";
+"HLS Streams" = "Flux HLS";

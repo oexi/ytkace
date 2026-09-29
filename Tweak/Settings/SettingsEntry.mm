@@ -110,6 +110,7 @@ static void YTKACERightButtonsLayoutSubviews(UIView *receiver, SEL selector) {
     }
     if (objc_getAssociatedObject(receiver, YTKACESettingsButtonAssociation) != nil) {
         YTKACEApplyRightNavigationVisibility(receiver);
+        YTKACEApplyTopNavigationGlass(receiver);
         return;
     }
 
@@ -121,6 +122,7 @@ static void YTKACERightButtonsLayoutSubviews(UIView *receiver, SEL selector) {
         }
     }
     if (stack == nil) {
+        YTKACEApplyTopNavigationGlass(receiver);
         return;
     }
 
@@ -141,6 +143,7 @@ static void YTKACERightButtonsLayoutSubviews(UIView *receiver, SEL selector) {
                              button,
                              OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     YTKACEApplyRightNavigationVisibility(receiver);
+    YTKACEApplyTopNavigationGlass(receiver);
 }
 
 void YTKACEInstallSettingsEntryHooks(void) {

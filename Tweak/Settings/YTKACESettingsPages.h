@@ -9,6 +9,7 @@ FOUNDATION_EXPORT UIViewController *YTKACEMakeOverlayOptionsController(void);
 FOUNDATION_EXPORT UIViewController *YTKACEMakeStreamingOptionsController(void);
 FOUNDATION_EXPORT UIViewController *YTKACEMakeNavigationOptionsController(void);
 FOUNDATION_EXPORT UIViewController *YTKACEMakeShortsOptionsController(void);
+FOUNDATION_EXPORT UIViewController *YTKACEMakeGlassOptionsController(void);
 FOUNDATION_EXPORT UIViewController *YTKACEMakeMiscOptionsController(void);
 FOUNDATION_EXPORT UIViewController *YTKACEMakeGestureOptionsController(void);
 FOUNDATION_EXPORT void YTKACEStartupDestinations(

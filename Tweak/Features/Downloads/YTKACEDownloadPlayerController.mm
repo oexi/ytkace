@@ -10,8 +10,10 @@
 #import "../SponsorBlock/SponsorPreferences.h"
 #import "../../Settings/YTKACESettingsPages.h"
 #import "../../UI/Assets.h"
+#import "../../UI/OverlayButtonHost.h"
 
 #import <AVFoundation/AVFoundation.h>
+#import <objc/message.h>
 #import <AVKit/AVKit.h>
 #import <MediaPlayer/MediaPlayer.h>
 #import <math.h>
@@ -1055,8 +1057,14 @@ static UIImage *YTKACEScrubberThumb(CGFloat diameter, UIColor *color) {
     CGFloat height = CGRectGetHeight(self.bounds);
     [[UIColor colorWithWhite:1.0 alpha:0.3] setFill];
     UIRectFill(self.bounds);
-    [UIColor.systemRedColor setFill];
-    UIRectFill(CGRectMake(0.0, 0.0, width * MAX(0.0, MIN(1.0, self.progress)), height));
+    CGFloat playedWidth = width * MAX(0.0, MIN(1.0, self.progress));
+    if (playedWidth > 0.0) {
+        CGContextRef context = UIGraphicsGetCurrentContext();
+        CGContextSaveGState(context);
+        UIRectClip(CGRectMake(0.0, 0.0, playedWidth, height));
+        [YTKACEProgressFillImage(width, height) drawInRect:CGRectMake(0.0, 0.0, width, height)];
+        CGContextRestoreGState(context);
+    }
     if (!isfinite(self.duration) || self.duration <= 0.0 || !YTKACESponsorBlockEnabled()) {
         return;
     }
@@ -1350,6 +1358,32 @@ static UIImage *YTKACEScrubberThumb(CGFloat diameter, UIColor *color) {
     return button;
 }
 
+- (void)addGlassToButton:(UIButton *)button side:(CGFloat)side {
+    if (!YTKACELiquidGlassAvailable() || !YTKACEFeatureEnabled(@"YTKACE.Preference.Glass.Player")) return;
+    Class effectClass = NSClassFromString(@"UIGlassEffect");
+    SEL styleSelector = NSSelectorFromString(@"effectWithStyle:");
+    UIVisualEffect *effect = [effectClass respondsToSelector:styleSelector]
+        ? ((id (*)(id, SEL, NSInteger))objc_msgSend)(effectClass, styleSelector, 1)
+        : [effectClass new];
+    if (effect == nil) return;
+    UIVisualEffectView *glass = [[UIVisualEffectView alloc] initWithEffect:effect];
+    glass.userInteractionEnabled = NO;
+    glass.clipsToBounds = YES;
+    glass.layer.cornerRadius = side * 0.5;
+    glass.layer.cornerCurve = kCACornerCurveContinuous;
+    glass.translatesAutoresizingMaskIntoConstraints = NO;
+    glass.layer.zPosition = -1.0;
+    [button insertSubview:glass atIndex:0];
+    [NSLayoutConstraint activateConstraints:@[
+        [glass.centerXAnchor constraintEqualToAnchor:button.centerXAnchor],
+        [glass.centerYAnchor constraintEqualToAnchor:button.centerYAnchor],
+        [glass.widthAnchor constraintEqualToConstant:side],
+        [glass.heightAnchor constraintEqualToConstant:side],
+        [button.widthAnchor constraintGreaterThanOrEqualToConstant:side],
+        [button.heightAnchor constraintGreaterThanOrEqualToConstant:side]
+    ]];
+}
+
 - (void)setSymbol:(NSString *)symbol size:(CGFloat)size forButton:(UIButton *)button {
     UIImageSymbolConfiguration *configuration =
         [UIImageSymbolConfiguration configurationWithPointSize:size
@@ -1445,6 +1479,9 @@ static UIImage *YTKACEScrubberThumb(CGFloat diameter, UIColor *color) {
                                       action:@selector(togglePlayback)];
     UIButton *next = [self buttonWithSymbol:@"forward.end.fill" size:26.0
                                       action:@selector(nextItem)];
+    [self addGlassToButton:previous side:48.0];
+    [self addGlassToButton:self.playButton side:64.0];
+    [self addGlassToButton:next side:48.0];
     UIStackView *center = [[UIStackView alloc] initWithArrangedSubviews:@[
         previous, self.playButton, next
     ]];
@@ -1482,7 +1519,7 @@ static UIImage *YTKACEScrubberThumb(CGFloat diameter, UIColor *color) {
         [button.heightAnchor constraintEqualToConstant:40.0].active = YES;
     }
 
-    UIColor *accent = UIColor.systemRedColor;
+    UIColor *accent = YTKACEProgressScrubberTint();
     self.slider = [YTKACESegmentSlider new];
     [self.slider setThumbImage:YTKACEScrubberThumb(13.0, accent) forState:UIControlStateNormal];
     [self.slider setThumbImage:YTKACEScrubberThumb(20.0, accent)
@@ -2061,9 +2098,31 @@ static UIImage *YTKACEScrubberThumb(CGFloat diameter, UIColor *color) {
 - (void)showOptions {
     [self.hideTimer invalidate];
     [self refreshControls];
-    self.optionsView.hidden = NO;
-    self.optionsView.alpha = 0.0;
-    [UIView animateWithDuration:0.2 animations:^{ self.optionsView.alpha = 1.0; }];
+    UIImageSymbolConfiguration *configuration =
+        [UIImageSymbolConfiguration configurationWithPointSize:18.0 weight:UIImageSymbolWeightRegular];
+    UIImage *(^icon)(NSString *) = ^UIImage *(NSString *name) {
+        return [[UIImage systemImageNamed:name withConfiguration:configuration]
+            imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate];
+    };
+    NSString *(^value)(UILabel *) = ^NSString *(UILabel *label) {
+        NSString *text = label.text ?: @"";
+        return [text hasPrefix:@"· "] ? [text substringFromIndex:2] : text;
+    };
+    __weak YTKACEDownloadPlayerController *weakSelf = self;
+    NSArray<NSDictionary *> *actions = @[
+        @{@"title": YTKACELocalized(@"Playback Speed"), @"subtitle": value(self.speedDetail),
+          @"icon": icon(@"speedometer"), @"handler": ^{ [weakSelf selectSpeed]; }},
+        @{@"title": YTKACELocalized(@"Sleep Timer"), @"subtitle": value(self.sleepDetail),
+          @"icon": icon(@"moon.zzz"), @"handler": ^{ [weakSelf selectSleepTimer]; }},
+        @{@"title": YTKACELocalized(@"Gestures"), @"subtitle": value(self.gesturesDetail),
+          @"icon": icon(@"hand.draw"), @"handler": ^{ [weakSelf toggleGestures]; }},
+        @{@"title": YTKACELocalized(@"AutoPlay"), @"subtitle": value(self.autoplayDetail),
+          @"icon": icon(@"forward.end"), @"handler": ^{ [weakSelf toggleAutoplay]; }},
+        @{@"title": YTKACELocalized(@"Play Next"),
+          @"icon": icon(@"text.line.first.and.arrowtriangle.forward"), @"handler": ^{ [weakSelf nextItem]; }}
+    ];
+    YTKACEPresentNativeSheet(nil, nil, self.view, actions);
+    [self scheduleControlsHide];
 }
 
 - (void)hideOptions {
@@ -2101,7 +2160,7 @@ static UIImage *YTKACEScrubberThumb(CGFloat diameter, UIColor *color) {
             selected = index;
         }
     }
-    YTKACEPresentSelectionMenu(self, self.optionsCard, YTKACELocalized(@"Playback Speed"), titles,
+    YTKACEPresentSelectionMenu(self, self.view, YTKACELocalized(@"Playback Speed"), titles,
         selected, ^(NSUInteger index) {
             self.session.playbackRate = speeds[index].floatValue;
             [self refreshControls];
@@ -2120,7 +2179,7 @@ static UIImage *YTKACEScrubberThumb(CGFloat diameter, UIColor *color) {
         NSUInteger match = [minutes indexOfObject:@(self.sleepMinutes)];
         if (match != NSNotFound) selected = match;
     }
-    YTKACEPresentSelectionMenu(self, self.optionsCard, YTKACELocalized(@"Sleep Timer"), titles,
+    YTKACEPresentSelectionMenu(self, self.view, YTKACELocalized(@"Sleep Timer"), titles,
         selected, ^(NSUInteger index) {
             [self.sleepTimer invalidate];
             self.sleepTimer = nil;

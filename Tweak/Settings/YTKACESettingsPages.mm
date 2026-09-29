@@ -1,4 +1,5 @@
 #import "YTKACESettingsPages.h"
+#import "../UI/OverlayButtonHost.h"
 #import "YTKACESettingsSearch.h"
 #import "../Features/Downloads/SABRDownloader.h"
 #import "YTKACERootOptionsController.h"
@@ -302,6 +303,11 @@ BOOL YTKACEPreferenceNeedsRestart(NSString *key) {
         @"YTKACE.Preference.App.RTLDisabled",
         @"YTKACE.Preference.Playback.LegacyQualityMenu",
         @"YTKACE.Preference.Navigation.StatusBarHidden",
+        @"YTKACE.Preference.Tabs.Glass",
+        @"YTKACE.Preference.Glass.TopBar",
+        @"YTKACE.Preference.Glass.Menus",
+        @"YTKACE.Preference.Glass.Notices",
+        @"YTKACE.Preference.Glass.Player",
         @"YTKACE.Preference.Tabs.Startup",
         @"YTKACE.Preference.Playback.CaptionsAlwaysOn",
         @"YTKACE.Preference.Navigation.NotificationsHidden"
@@ -312,23 +318,30 @@ void YTKACEShowRestartNotice(UIViewController *controller) {
     UIView *host = controller.navigationController.view ?: controller.view;
     UIView *old = [host viewWithTag:0x594B524E];
     [old removeFromSuperview];
-    UILabel *notice = [UILabel new];
+    UIView *notice = [UIView new];
     notice.tag = 0x594B524E;
-    notice.text = YTKACELocalized(@"Your changes take effect once YouTube restarts.");
-    notice.textColor = UIColor.labelColor;
     notice.backgroundColor = [UIColor colorWithWhite:0.72 alpha:0.96];
-    notice.font = [UIFont systemFontOfSize:13.0];
     notice.layer.cornerRadius = 8.0;
     notice.layer.masksToBounds = YES;
-    notice.textAlignment = NSTextAlignmentLeft;
     notice.translatesAutoresizingMaskIntoConstraints = NO;
+    UILabel *label = [UILabel new];
+    label.text = YTKACELocalized(@"Your changes take effect once YouTube restarts.");
+    label.textColor = UIColor.labelColor;
+    label.font = [UIFont systemFontOfSize:13.0];
+    label.numberOfLines = 2;
+    label.translatesAutoresizingMaskIntoConstraints = NO;
+    [notice addSubview:label];
+    if (YTKACEApplyGlassBackground(notice, NO)) notice.layer.cornerRadius = 16.0;
     [host addSubview:notice];
     UILayoutGuide *safe = host.safeAreaLayoutGuide;
     [NSLayoutConstraint activateConstraints:@[
         [notice.leadingAnchor constraintEqualToAnchor:safe.leadingAnchor constant:8.0],
         [notice.trailingAnchor constraintEqualToAnchor:safe.trailingAnchor constant:-8.0],
         [notice.bottomAnchor constraintEqualToAnchor:safe.bottomAnchor constant:-8.0],
-        [notice.heightAnchor constraintEqualToConstant:48.0]
+        [notice.heightAnchor constraintEqualToConstant:48.0],
+        [label.leadingAnchor constraintEqualToAnchor:notice.leadingAnchor constant:14.0],
+        [label.trailingAnchor constraintEqualToAnchor:notice.trailingAnchor constant:-14.0],
+        [label.centerYAnchor constraintEqualToAnchor:notice.centerYAnchor]
     ]];
     notice.alpha = 0.0;
     [UIView animateWithDuration:0.2 animations:^{ notice.alpha = 1.0; }];
@@ -358,20 +371,15 @@ void YTKACEPresentSelectionMenu(UIViewController *presenter,
                                 NSUInteger selectedIndex,
                                 YTKACEChoiceHandler handler) {
     (void)title;
+    (void)sourceView;
     if (titles.count == 0) {
         return;
     }
     selectedIndex = MIN(selectedIndex, titles.count - 1);
-    Class sheetClass = NSClassFromString(@"YTDefaultSheetController");
     Class actionClass = NSClassFromString(@"YTActionSheetAction");
-    SEL makeSheet = NSSelectorFromString(
-        @"sheetControllerWithMessage:subMessage:delegate:parentResponder:");
     SEL makeAction = NSSelectorFromString(@"actionWithTitle:iconImage:style:handler:");
-    if (sheetClass != Nil && actionClass != Nil &&
-        [sheetClass respondsToSelector:makeSheet] &&
-        [actionClass respondsToSelector:makeAction]) {
-        id sheet = ((id (*)(id, SEL, id, id, id, id))objc_msgSend)(
-            sheetClass, makeSheet, nil, nil, nil, nil);
+    id sheet = [actionClass respondsToSelector:makeAction] ? YTKACEMakeSheet(nil, nil) : nil;
+    if (sheet != nil) {
         UIImage *check = [[UIImage systemImageNamed:@"checkmark"]
             imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate];
         UIImage *blank = YTKACEBlankChoiceIcon();
@@ -390,18 +398,7 @@ void YTKACEPresentSelectionMenu(UIViewController *presenter,
                 ((void (*)(id, SEL, id))objc_msgSend)(sheet, addAction, action);
             }
         }];
-        if (YTKACERealUserInterfaceIdiom() == UIUserInterfaceIdiomPad &&
-            sourceView != nil &&
-            [sheet respondsToSelector:NSSelectorFromString(@"presentFromView:animated:completion:")]) {
-            ((void (*)(id, SEL, id, BOOL, id))objc_msgSend)(
-                sheet, NSSelectorFromString(@"presentFromView:animated:completion:"),
-                sourceView, YES, nil);
-        } else if ([sheet respondsToSelector:
-                    NSSelectorFromString(@"presentFromViewController:animated:completion:")]) {
-            ((void (*)(id, SEL, id, BOOL, id))objc_msgSend)(
-                sheet, NSSelectorFromString(@"presentFromViewController:animated:completion:"),
-                presenter, YES, nil);
-        }
+        YTKACEShowSheet(sheet, presenter);
         return;
     }
     YTKACEShowNotice(YTKACELocalized(@"YouTube menu unavailable"));
@@ -1501,9 +1498,11 @@ static NSDictionary *YTKACEPlayerControlsDefinition(void) {
         ],
         @[
             YTKACEToggle(@"Remove Ads", YTKACENoAdsKey, @"", @""),
-            YTKACEToggleDetail(@"Playback Fix (test)",
-                @"Reloads the video when playback fails. Restart YouTube after changing.",
-                @"YTKACE.Preference.Playback.Fix")
+            YTKACEPickerDetail(@"Playback Fix (test)",
+                @"Restart YouTube after changing.",
+                @"YTKACE.Preference.Playback.FixMode",
+                @[@"Off", @"Reload", @"HLS Streams"],
+                @[@0, @1, @2], (NSUInteger)YTKACEPlaybackFixMode())
         ],
         progressSection,
         @[
@@ -1663,6 +1662,25 @@ static NSDictionary *YTKACENavigationOptionsDefinition(void) {
     ], @[YTKACELocalized(@"BRAND & CAST"), YTKACELocalized(@"TOP BUTTONS"), YTKACELocalized(@"PAGE CHROME")]);
 }
 
+static NSDictionary *YTKACEGlassOptionsDefinition(void) {
+    return YTKACEPageDefinition(@"glass", @"Liquid Glass", @[
+        @[
+            YTKACEToggle(@"Tab Bar", @"YTKACE.Preference.Tabs.Glass", @"", @""),
+            YTKACEToggle(@"Top Bar Buttons", @"YTKACE.Preference.Glass.TopBar", @"", @""),
+            YTKACEToggle(@"Menus and Sheets", @"YTKACE.Preference.Glass.Menus", @"", @""),
+            YTKACEToggle(@"YTKACE Toasts and Popups", @"YTKACE.Preference.Glass.Notices", @"", @""),
+            YTKACEToggle(@"Player Buttons", @"YTKACE.Preference.Glass.Player", @"", @"")
+        ],
+        @[
+            YTKACEToggle(@"Shrink Tab Bar When Scrolling", @"YTKACE.Preference.Tabs.GlassMinimize", @"", @""),
+            YTKACEPicker(@"Selected Tab Color", @"YTKACE.Preference.Tabs.SelectedTint",
+                         @[YTKACELocalized(@"Off"), YTKACELocalized(@"Text Only"), YTKACELocalized(@"Text and Icon")],
+                         @[@0, @1, @2], 0, @"", @""),
+            YTKACEColor(@"Color", @"YTKACE.Preference.Tabs.SelectedTintColor", @"#0A84FF")
+        ]
+    ], @[YTKACELocalized(@"GLASS"), YTKACELocalized(@"EXTRAS")]);
+}
+
 static NSDictionary *YTKACEShortsOptionsDefinition(void) {
     return YTKACEPageDefinition(@"shorts", @"Shorts", @[
         @[
@@ -1806,6 +1824,10 @@ UIViewController *YTKACEMakeNavigationOptionsController(void) {
     return YTKACEPageFromDefinition(YTKACENavigationOptionsDefinition());
 }
 
+UIViewController *YTKACEMakeGlassOptionsController(void) {
+    return YTKACEPageFromDefinition(YTKACEGlassOptionsDefinition());
+}
+
 UIViewController *YTKACEMakeShortsOptionsController(void) {
     return YTKACEPageFromDefinition(YTKACEShortsOptionsDefinition());
 }
@@ -1819,16 +1841,29 @@ UIViewController *YTKACEMakeGestureOptionsController(void) {
 }
 
 NSArray<NSDictionary *> *YTKACEAllPageDefinitions(void) {
-    return @[
+    NSArray *pages = @[
         YTKACESponsorBlockDefinition(),
         YTKACEPlayerControlsDefinition(),
         YTKACEOverlayOptionsDefinition(),
         YTKACEStreamingOptionsDefinition(),
         YTKACENavigationOptionsDefinition(),
+        YTKACEGlassOptionsDefinition(),
         YTKACEShortsOptionsDefinition(),
         YTKACEMiscOptionsDefinition(),
         YTKACEGestureOptionsDefinition()
     ];
+    if (YTKACELiquidGlassAvailable()) return pages;
+    NSMutableArray *filtered = [pages mutableCopy];
+    [filtered replaceObjectAtIndex:5 withObject:YTKACEPageDefinition(@"tabs", @"Tabs", @[
+        @[
+            @{}, @{}, @{},
+            YTKACEPicker(@"Selected Tab Color", @"YTKACE.Preference.Tabs.SelectedTint",
+                         @[YTKACELocalized(@"Off"), YTKACELocalized(@"Text Only"), YTKACELocalized(@"Text and Icon")],
+                         @[@0, @1, @2], 0, @"", @""),
+            YTKACEColor(@"Color", @"YTKACE.Preference.Tabs.SelectedTintColor", @"#0A84FF")
+        ]
+    ], @[YTKACELocalized(@"MAIN")])];
+    return filtered;
 }
 
 UIViewController *YTKACEMakeCreditsController(void) {
