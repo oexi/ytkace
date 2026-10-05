@@ -8,7 +8,7 @@ NSString * const YTKACELanguageKey = @"YTKACE.Preference.Language";
 
 NSArray<NSString *> *YTKACEAvailableLanguages(void) {
     return @[@"system", @"en", @"ar", @"ckb", @"de", @"es", @"fr", @"it",
-             @"ja", @"ko", @"pl", @"ru", @"tr", @"vi", @"zh-Hans", @"zh-Hant"];
+             @"ja", @"ko", @"pl", @"pt-BR", @"ru", @"tr", @"vi", @"zh-Hans", @"zh-Hant"];
 }
 
 NSString *YTKACELanguageDisplayName(NSString *code) {
@@ -27,6 +27,7 @@ NSString *YTKACELanguageDisplayName(NSString *code) {
             @"ja": @"日本語",
             @"ko": @"한국어",
             @"pl": @"Polski",
+            @"pt-BR": @"Português (Brasil)",
             @"ru": @"Русский",
             @"tr": @"Türkçe",
             @"vi": @"Tiếng Việt",
@@ -50,6 +51,7 @@ static NSString *YTKACEPreferredLanguage(void) {
             return @"zh-Hans";
         }
         if ([code hasPrefix:@"zh"]) return @"zh-Hant";
+        if ([code hasPrefix:@"pt"]) return @"pt-BR";
         NSRange separator = [code rangeOfString:@"-"];
         if (separator.location != NSNotFound) {
             code = [code substringToIndex:separator.location];

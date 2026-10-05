@@ -43,7 +43,7 @@ static BOOL YTKACEIsSheetContainer(UIView *view) {
     dispatch_once(&onceToken, ^{
         names = [NSSet setWithArray:@[@"YTDraggableView", @"YTDialogContainerScrollView", @"GOODialogView",
                                       @"YTContextualWrapView", @"YTActionSheetHeaderView", @"UIScrollView",
-                                      @"GOODialogContentView"]];
+                                      @"GOODialogContentView", @"YTMinimumWidthDialogView"]];
     });
     return [names containsObject:NSStringFromClass(view.class)];
 }

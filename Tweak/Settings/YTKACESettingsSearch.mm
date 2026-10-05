@@ -7,24 +7,7 @@
 #import <objc/runtime.h>
 
 static UIViewController *YTKACEControllerForPageID(NSString *pageID) {
-    static NSDictionary<NSString *, UIViewController *(^)(void)> *builders;
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^{
-        builders = @{
-            @"sponsorblock": ^UIViewController *{ return YTKACEMakeSponsorBlockController(); },
-            @"player": ^UIViewController *{ return YTKACEMakePlayerControlsController(); },
-            @"overlay": ^UIViewController *{ return YTKACEMakeOverlayOptionsController(); },
-            @"playback": ^UIViewController *{ return YTKACEMakeStreamingOptionsController(); },
-            @"navigation": ^UIViewController *{ return YTKACEMakeNavigationOptionsController(); },
-            @"glass": ^UIViewController *{ return YTKACEMakeGlassOptionsController(); },
-            @"tabs": ^UIViewController *{ return YTKACEMakeTabBarOptionsController(); },
-            @"shorts": ^UIViewController *{ return YTKACEMakeShortsOptionsController(); },
-            @"other": ^UIViewController *{ return YTKACEMakeMiscOptionsController(); },
-            @"gestures": ^UIViewController *{ return YTKACEMakeGestureOptionsController(); }
-        };
-    });
-    UIViewController *(^builder)(void) = builders[pageID ?: @""];
-    return builder != nil ? builder() : nil;
+    return pageID.length != 0 ? YTKACEMakeSettingsPage(pageID) : nil;
 }
 
 static NSArray<NSDictionary *> *YTKACESearchIndex(void) {
@@ -45,6 +28,7 @@ static NSArray<NSDictionary *> *YTKACESearchIndex(void) {
                 NSString *subtitle = [item[@"subtitle"] isKindOfClass:NSString.class]
                     ? item[@"subtitle"] : @"";
                 [records addObject:@{
+                    @"en": [item[@"en"] isKindOfClass:NSString.class] ? item[@"en"] : @"",
                     @"item": item,
                     @"pageID": page[@"id"],
                     @"pageTitle": pageTitle,
@@ -65,6 +49,9 @@ static NSInteger YTKACEMatchScore(NSDictionary *record, NSString *query) {
     NSRange inTitle = [record[@"title"] rangeOfString:query options:options];
     if (inTitle.location == 0) return 0;
     if (inTitle.location != NSNotFound) return 1;
+    NSRange inEnglish = [record[@"en"] rangeOfString:query options:options];
+    if (inEnglish.location == 0) return 1;
+    if (inEnglish.location != NSNotFound) return 2;
     if ([record[@"subtitle"] rangeOfString:query options:options].location != NSNotFound) return 2;
     if ([record[@"header"] rangeOfString:query options:options].location != NSNotFound ||
         [record[@"pageTitle"] rangeOfString:query options:options].location != NSNotFound) return 3;
@@ -127,48 +114,61 @@ void YTKACEOpenSettingsRecord(NSDictionary *record, UIViewController *presenter)
     });
 }
 
-@interface YTKACESearchOverlayController : UIViewController
-    <UISearchBarDelegate, UITableViewDataSource, UITableViewDelegate>
+@interface YTKACESearchOverlayController : UIViewController <UISearchBarDelegate>
 @property(nonatomic, weak) UIViewController *hostController;
 @property(nonatomic, strong) UISearchBar *searchBar;
-@property(nonatomic, strong) UITableView *table;
-@property(nonatomic, copy) NSArray<NSDictionary *> *results;
+@property(nonatomic, strong) UIViewController *results;
+@property(nonatomic, strong) UILabel *emptyLabel;
 @end
 
 @implementation YTKACESearchOverlayController
 
 - (void)viewDidLoad {
     [super viewDidLoad];
-    self.results = @[];
     self.view.backgroundColor = UIColor.systemBackgroundColor;
 
     self.searchBar = [UISearchBar new];
     self.searchBar.delegate = self;
-    self.searchBar.placeholder = YTKACELocalized(@"Search");
+    self.searchBar.placeholder = YTKACELocalized(@"Search settings");
     self.searchBar.searchBarStyle = UISearchBarStyleMinimal;
     self.searchBar.tintColor = YTKACEAccentColor();
     self.searchBar.searchTextField.tintColor = YTKACEAccentColor();
+    self.searchBar.autocorrectionType = UITextAutocorrectionTypeNo;
+    self.searchBar.autocapitalizationType = UITextAutocapitalizationTypeNone;
     self.searchBar.translatesAutoresizingMaskIntoConstraints = NO;
     [self.view addSubview:self.searchBar];
 
-    self.table = [[UITableView alloc] initWithFrame:CGRectZero
-                                              style:UITableViewStylePlain];
-    self.table.dataSource = self;
-    self.table.delegate = self;
-    self.table.backgroundColor = UIColor.clearColor;
-    self.table.keyboardDismissMode = UIScrollViewKeyboardDismissModeOnDrag;
-    self.table.translatesAutoresizingMaskIntoConstraints = NO;
-    [self.view addSubview:self.table];
+    self.results = YTKACEMakeSettingsResultsController(@[], @[]);
+    [self addChildViewController:self.results];
+    UIView *resultsView = self.results.view;
+    resultsView.translatesAutoresizingMaskIntoConstraints = NO;
+    [self.view addSubview:resultsView];
+    [self.results didMoveToParentViewController:self];
+    if ([self.results isKindOfClass:UITableViewController.class]) {
+        ((UITableViewController *)self.results).tableView.keyboardDismissMode =
+            UIScrollViewKeyboardDismissModeOnDrag;
+    }
+
+    self.emptyLabel = [UILabel new];
+    self.emptyLabel.text = YTKACELocalized(@"No matching settings");
+    self.emptyLabel.textColor = UIColor.secondaryLabelColor;
+    self.emptyLabel.textAlignment = NSTextAlignmentCenter;
+    self.emptyLabel.hidden = YES;
+    self.emptyLabel.translatesAutoresizingMaskIntoConstraints = NO;
+    [self.view addSubview:self.emptyLabel];
 
     UILayoutGuide *safe = self.view.safeAreaLayoutGuide;
     [NSLayoutConstraint activateConstraints:@[
         [self.searchBar.topAnchor constraintEqualToAnchor:safe.topAnchor],
         [self.searchBar.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor],
         [self.searchBar.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor],
-        [self.table.topAnchor constraintEqualToAnchor:self.searchBar.bottomAnchor],
-        [self.table.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor],
-        [self.table.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor],
-        [self.table.bottomAnchor constraintEqualToAnchor:self.view.bottomAnchor]
+        [resultsView.topAnchor constraintEqualToAnchor:self.searchBar.bottomAnchor],
+        [resultsView.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor],
+        [resultsView.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor],
+        [resultsView.bottomAnchor constraintEqualToAnchor:self.view.bottomAnchor],
+        [self.emptyLabel.topAnchor constraintEqualToAnchor:self.searchBar.bottomAnchor constant:40.0],
+        [self.emptyLabel.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor constant:20.0],
+        [self.emptyLabel.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor constant:-20.0]
     ]];
 }
 
@@ -190,8 +190,11 @@ void YTKACEOpenSettingsRecord(NSDictionary *record, UIViewController *presenter)
 
 - (void)searchBar:(UISearchBar *)searchBar textDidChange:(NSString *)text {
     (void)searchBar;
-    self.results = YTKACEFilterSettings(text);
-    [self.table reloadData];
+    NSString *query = [text stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
+    NSArray<NSString *> *titles = @[];
+    NSArray *sections = query.length != 0 ? YTKACESearchResultSections(query, &titles) : @[];
+    YTKACEUpdateSettingsResultsController(self.results, sections, titles);
+    self.emptyLabel.hidden = query.length == 0 || sections.count != 0;
 }
 
 - (void)searchBarCancelButtonClicked:(UISearchBar *)searchBar {
@@ -201,40 +204,6 @@ void YTKACEOpenSettingsRecord(NSDictionary *record, UIViewController *presenter)
 
 - (void)searchBarSearchButtonClicked:(UISearchBar *)searchBar {
     [searchBar resignFirstResponder];
-}
-
-- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
-    (void)tableView;
-    (void)section;
-    return (NSInteger)self.results.count;
-}
-
-- (UITableViewCell *)tableView:(UITableView *)tableView
-         cellForRowAtIndexPath:(NSIndexPath *)indexPath {
-    static NSString *const identifier = @"YTKACEOverlayRow";
-    UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:identifier];
-    if (cell == nil) {
-        cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle
-                                      reuseIdentifier:identifier];
-    }
-    NSDictionary *record = self.results[(NSUInteger)indexPath.row];
-    NSString *header = record[@"header"];
-    cell.textLabel.text = record[@"title"];
-    cell.detailTextLabel.text = header.length != 0
-        ? [NSString stringWithFormat:@"%@ › %@", record[@"pageTitle"], header]
-        : record[@"pageTitle"];
-    cell.detailTextLabel.textColor = UIColor.secondaryLabelColor;
-    cell.backgroundColor = UIColor.clearColor;
-    cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
-    return cell;
-}
-
-- (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
-    [tableView deselectRowAtIndexPath:indexPath animated:YES];
-    NSDictionary *record = self.results[(NSUInteger)indexPath.row];
-    UIViewController *host = self.hostController;
-    [self dismissOverlay];
-    YTKACEOpenSettingsRecord(record, host);
 }
 
 @end

@@ -2,6 +2,7 @@
 #import "../../Runtime/Preferences.h"
 #import "../../Runtime/Localization.h"
 #import "../../UI/Notice.h"
+#import "DownloadLog.h"
 
 #import <UIKit/UIKit.h>
 #import <math.h>
@@ -15,7 +16,11 @@
 @property(nonatomic, assign) double progress;
 @property(nonatomic, assign) int64_t downloadedBytes;
 @property(nonatomic, assign) int64_t totalBytes;
+@property(nonatomic, assign) BOOL failed;
+@property(nonatomic, copy, nullable) NSString *detail;
 @end
+
+NSNotificationName const YTKACEDownloadJobsDidChangeNotification = @"YTKACEDownloadJobsDidChangeNotification";
 
 @implementation YTKACEDownloadProgressItem
 @end
@@ -25,14 +30,18 @@
 @property(nonatomic, strong) UIImageView *thumbnailView;
 @property(nonatomic, strong) UILabel *titleLabel;
 @property(nonatomic, strong) UILabel *statusLabel;
+@property(nonatomic, strong) UILabel *detailLabel;
 @property(nonatomic, strong) UILabel *percentLabel;
 @property(nonatomic, strong) UIProgressView *progressView;
 @property(nonatomic, strong) UIButton *cancelButton;
+@property(nonatomic, strong) UIButton *retryButton;
 @property(nonatomic, strong) NSMutableDictionary<NSString *, YTKACEDownloadProgressItem *> *items;
 @property(nonatomic, strong) NSMutableArray<NSString *> *activeIdentifiers;
 @property(nonatomic, copy, nullable) NSString *visibleIdentifier;
 @property(nonatomic, copy, nullable) NSString *renderedIdentifier;
 @property(nonatomic, strong) NSTimer *positionTimer;
+@property(nonatomic, assign) BOOL userHidden;
+@property(nonatomic, assign) BOOL dragging;
 @end
 
 @implementation YTKACEDownloadProgressView
@@ -46,9 +55,10 @@
         (dark ? YTKACEInterfaceSurfaceColor(traits) : UIColor.systemBackgroundColor);
     self.thumbnailView.backgroundColor = YTKACEInterfaceSurfaceColor(traits);
     self.titleLabel.textColor = UIColor.labelColor;
-    self.statusLabel.textColor = UIColor.secondaryLabelColor;
+    self.detailLabel.textColor = UIColor.tertiaryLabelColor;
     self.percentLabel.textColor = UIColor.labelColor;
     self.cancelButton.tintColor = UIColor.tertiaryLabelColor;
+    self.retryButton.tintColor = UIColor.systemRedColor;
     self.progressView.trackTintColor = oled
         ? [UIColor colorWithWhite:0.18 alpha:1.0]
         : UIColor.systemGray4Color;
@@ -94,6 +104,10 @@
     tap.cancelsTouchesInView = NO;
     tap.delegate = self;
     [self.card addGestureRecognizer:tap];
+    UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc]
+        initWithTarget:self action:@selector(cardPanned:)];
+    pan.delegate = self;
+    [self.card addGestureRecognizer:pan];
 
     self.thumbnailView = [UIImageView new];
     self.thumbnailView.contentMode = UIViewContentModeScaleAspectFill;
@@ -102,16 +116,24 @@
     [self.card addSubview:self.thumbnailView];
 
     self.titleLabel = [UILabel new];
-    self.titleLabel.font = [UIFont systemFontOfSize:13.0 weight:UIFontWeightSemibold];
+    self.titleLabel.font = [UIFont systemFontOfSize:14.0 weight:UIFontWeightSemibold];
     self.titleLabel.lineBreakMode = NSLineBreakByTruncatingTail;
     [self.card addSubview:self.titleLabel];
 
     self.statusLabel = [UILabel new];
-    self.statusLabel.font = [UIFont monospacedDigitSystemFontOfSize:11.0 weight:UIFontWeightRegular];
+    self.statusLabel.font = [UIFont monospacedDigitSystemFontOfSize:12.0 weight:UIFontWeightRegular];
+    self.statusLabel.adjustsFontSizeToFitWidth = YES;
+    self.statusLabel.minimumScaleFactor = 0.75;
     [self.card addSubview:self.statusLabel];
 
+    self.detailLabel = [UILabel new];
+    self.detailLabel.font = [UIFont monospacedDigitSystemFontOfSize:11.0 weight:UIFontWeightRegular];
+    self.detailLabel.adjustsFontSizeToFitWidth = YES;
+    self.detailLabel.minimumScaleFactor = 0.8;
+    [self.card addSubview:self.detailLabel];
+
     self.percentLabel = [UILabel new];
-    self.percentLabel.font = [UIFont monospacedDigitSystemFontOfSize:15.0 weight:UIFontWeightBold];
+    self.percentLabel.font = [UIFont monospacedDigitSystemFontOfSize:13.0 weight:UIFontWeightSemibold];
     self.percentLabel.textAlignment = NSTextAlignmentRight;
     [self.card addSubview:self.percentLabel];
 
@@ -121,6 +143,12 @@
     [self.cancelButton addTarget:self action:@selector(cancelTapped)
                 forControlEvents:UIControlEventTouchUpInside];
     [self.card addSubview:self.cancelButton];
+
+    self.retryButton = [UIButton buttonWithType:UIButtonTypeSystem];
+    [self.retryButton setImage:[UIImage systemImageNamed:@"arrow.clockwise.circle.fill"] forState:UIControlStateNormal];
+    self.retryButton.hidden = YES;
+    [self.retryButton addTarget:self action:@selector(retryTapped) forControlEvents:UIControlEventTouchUpInside];
+    [self.card addSubview:self.retryButton];
 
     self.progressView = [[UIProgressView alloc]
         initWithProgressViewStyle:UIProgressViewStyleDefault];
@@ -144,32 +172,79 @@
 - (void)layoutCard {
     UIWindow *window = [self keyWindow];
     if (window == nil || self.card.superview == nil) return;
-    CGFloat width = MIN(CGRectGetWidth(window.bounds) - 24.0, 430.0);
+    CGFloat width = MIN(CGRectGetWidth(window.bounds) - 24.0, 400.0);
+    CGFloat height = 64.0;
     CGFloat bottom = window.safeAreaInsets.bottom + 52.0;
     CGFloat x = UIDevice.currentDevice.userInterfaceIdiom == UIUserInterfaceIdiomPad
         ? 12.0 : (CGRectGetWidth(window.bounds) - width) * 0.5;
-    self.card.frame = CGRectMake(x, CGRectGetHeight(window.bounds) - bottom - 80.0,
-                                 width, 72.0);
-    self.thumbnailView.frame = CGRectMake(8.0, 6.0, 100.0, 60.0);
-    self.cancelButton.frame = CGRectMake(width - 30.0, 24.0, 24.0, 24.0);
-    self.percentLabel.frame = CGRectMake(width - 88.0, 12.0, 52.0, 20.0);
-    CGFloat textWidth = MAX(width - 206.0, 80.0);
-    self.titleLabel.frame = CGRectMake(118.0, 11.0, textWidth, 20.0);
-    self.statusLabel.frame = CGRectMake(118.0, 35.0, width - 158.0, 18.0);
-    if (self.card.clipsToBounds) {
-        self.progressView.frame = CGRectMake(118.0, 60.0, MAX(0.0, width - 130.0), 3.0);
-        self.progressView.layer.cornerRadius = 1.5;
-        self.progressView.clipsToBounds = YES;
-    } else {
-        self.progressView.frame = CGRectMake(0.0, 69.5, width, 2.0);
-        self.progressView.layer.cornerRadius = 0.0;
-        self.progressView.clipsToBounds = NO;
+    CGRect target = CGRectMake(x, CGRectGetHeight(window.bounds) - bottom - height - 8.0, width, height);
+    self.card.bounds = CGRectMake(0.0, 0.0, width, height);
+    self.card.center = CGPointMake(CGRectGetMidX(target), CGRectGetMidY(target));
+    self.thumbnailView.frame = CGRectMake(8.0, 8.0, 85.0, 48.0);
+    self.thumbnailView.layer.cornerRadius = 7.0;
+    self.cancelButton.frame = CGRectMake(width - 32.0, 19.0, 26.0, 26.0);
+    self.retryButton.frame = CGRectMake(width - 60.0, 19.0, 26.0, 26.0);
+    CGFloat textX = 103.0;
+    CGFloat rightEdge = self.retryButton.hidden ? width - 38.0 : width - 66.0;
+    self.percentLabel.frame = CGRectMake(rightEdge - 44.0, 9.0, 42.0, 18.0);
+    CGFloat titleRight = self.percentLabel.hidden ? rightEdge : rightEdge - 48.0;
+    self.titleLabel.frame = CGRectMake(textX, 9.0, MAX(40.0, titleRight - textX), 18.0);
+    self.statusLabel.frame = CGRectMake(textX, 29.0, MAX(40.0, rightEdge - textX), 15.0);
+    self.detailLabel.hidden = YES;
+    self.progressView.frame = CGRectMake(textX, 50.0, MAX(0.0, rightEdge - textX), 3.0);
+    self.progressView.layer.cornerRadius = 1.5;
+    self.progressView.clipsToBounds = YES;
+}
+
+- (void)hideCardAnimated {
+    [self.positionTimer invalidate];
+    self.positionTimer = nil;
+    [UIView animateWithDuration:0.22 delay:0.0 options:UIViewAnimationOptionBeginFromCurrentState animations:^{
+        self.card.alpha = 0.0;
+        self.card.transform = CGAffineTransformMakeTranslation(0.0, 40.0);
+    } completion:^(BOOL finished) {
+        (void)finished;
+        if (self.card.alpha > 0.01) return;
+        [self.card removeFromSuperview];
+        self.card.transform = CGAffineTransformIdentity;
+    }];
+}
+
+- (void)setSuppressed:(BOOL)suppressed {
+    if (_suppressed == suppressed) return;
+    _suppressed = suppressed;
+    if (suppressed) {
+        [self hideCardAnimated];
+    } else if (self.items.count != 0 && !self.userHidden) {
+        [self renderItem:self.items[self.visibleIdentifier] ?: self.items[self.activeIdentifiers.firstObject]];
     }
+}
+
+- (void)cardPanned:(UIPanGestureRecognizer *)pan {
+    CGFloat dy = [pan translationInView:self.card.superview].y;
+    if (pan.state == UIGestureRecognizerStateBegan) self.dragging = YES;
+    if (pan.state == UIGestureRecognizerStateBegan || pan.state == UIGestureRecognizerStateChanged) {
+        self.card.transform = CGAffineTransformMakeTranslation(0.0, MAX(0.0, dy));
+        self.card.alpha = 1.0 - MIN(0.6, MAX(0.0, dy) / 120.0);
+        return;
+    }
+    if (pan.state != UIGestureRecognizerStateEnded && pan.state != UIGestureRecognizerStateCancelled) return;
+    self.dragging = NO;
+    if (dy > 40.0 || [pan velocityInView:self.card.superview].y > 500.0) {
+        self.userHidden = YES;
+        YTKACEDownloadLog(@"progress", @"card hidden by swipe active=%lu", (unsigned long)self.items.count);
+        [self hideCardAnimated];
+        return;
+    }
+    [UIView animateWithDuration:0.25 animations:^{
+        self.card.alpha = 1.0;
+        self.card.transform = CGAffineTransformIdentity;
+    }];
 }
 
 - (void)attach {
     UIWindow *window = [self keyWindow];
-    if (window == nil) return;
+    if (window == nil || self.suppressed || self.userHidden) return;
     if (self.card.superview != window) {
         [self.card removeFromSuperview];
         [window addSubview:self.card];
@@ -184,7 +259,7 @@
             (void)timer;
             [weakSelf layoutCard];
         }];
-    if (self.card.alpha < 1.0) {
+    if (self.card.alpha < 1.0 && !self.dragging) {
         self.card.transform = CGAffineTransformMakeTranslation(0.0, 18.0);
         [UIView animateWithDuration:0.32 delay:0.0
             usingSpringWithDamping:0.82 initialSpringVelocity:0.2
@@ -202,10 +277,15 @@
     self.titleLabel.text = item.title;
     NSString *count = @"";
     if (self.activeIdentifiers.count > 1) {
-        NSUInteger index = [self.activeIdentifiers indexOfObject:item.identifier];
-        NSUInteger position = index == NSNotFound ? 1 : index + 1;
-        count = [NSString stringWithFormat:@"  •  %lu/%lu active",
-            (unsigned long)position, (unsigned long)self.activeIdentifiers.count];
+        NSUInteger failed = 0;
+        for (NSString *identifier in self.activeIdentifiers) {
+            if (self.items[identifier].failed) failed++;
+        }
+        NSUInteger running = self.activeIdentifiers.count - failed;
+        NSMutableArray<NSString *> *parts = [NSMutableArray array];
+        if (running != 0) [parts addObject:[NSString stringWithFormat:YTKACELocalized(@"%lu downloading"), (unsigned long)running]];
+        if (failed != 0) [parts addObject:[NSString stringWithFormat:YTKACELocalized(@"%lu failed"), (unsigned long)failed]];
+        count = [@"  •  " stringByAppendingString:[parts componentsJoinedByString:@" · "]];
     }
     NSString *bytes = @"";
     if (item.downloadedBytes > 0) {
@@ -219,8 +299,20 @@
             bytes = [NSString stringWithFormat:@"  •  %@", done];
         }
     }
-    self.statusLabel.text = [NSString stringWithFormat:@"%@%@%@",
-        item.stage, bytes, count];
+    if (item.failed) bytes = @"";
+    NSString *stageText = item.failed && item.detail.length != 0
+        ? [NSString stringWithFormat:@"%@ · %@", item.stage, item.detail] : item.stage;
+    self.statusLabel.textColor = item.failed ? UIColor.systemRedColor : UIColor.secondaryLabelColor;
+    NSString *detail = [bytes stringByReplacingOccurrencesOfString:@"  •  " withString:@""];
+    NSString *summary = [count stringByReplacingOccurrencesOfString:@"  •  " withString:@""];
+    NSMutableArray<NSString *> *details = [NSMutableArray array];
+    if (detail.length != 0) [details addObject:detail];
+    if (summary.length != 0) [details addObject:summary];
+    [details insertObject:stageText atIndex:0];
+    self.statusLabel.text = [details componentsJoinedByString:@" · "];
+    self.retryButton.hidden = !item.failed || self.retryHandler == nil;
+    self.percentLabel.hidden = item.failed;
+    [self layoutCard];
     double progress = isfinite(item.progress)
         ? MIN(MAX(item.progress, 0.0), 1.0) : 0.0;
     self.percentLabel.text = [NSString stringWithFormat:@"%.0f%%", progress * 100.0];
@@ -239,9 +331,9 @@
     }
     self.renderedIdentifier = [item.identifier copy];
     self.thumbnailView.image = item.thumbnail;
-    self.cancelButton.hidden = [item.stage isEqualToString:YTKACELocalized(@"Merging")] ||
+    self.cancelButton.hidden = !item.failed && ([item.stage isEqualToString:YTKACELocalized(@"Merging")] ||
         [item.stage isEqualToString:YTKACELocalized(@"Complete")] ||
-        [item.stage isEqualToString:YTKACELocalized(@"Failed")] || [item.stage isEqualToString:YTKACELocalized(@"Cancelled")];
+        [item.stage isEqualToString:YTKACELocalized(@"Cancelled")]);
     if ([item.stage isEqualToString:YTKACELocalized(@"Downloading audio")]) {
         self.progressView.progressTintColor = UIColor.systemPurpleColor;
     } else if ([item.stage isEqualToString:YTKACELocalized(@"Downloading video")]) {
@@ -250,9 +342,82 @@
         self.progressView.progressTintColor = UIColor.systemOrangeColor;
     } else if ([item.stage isEqualToString:YTKACELocalized(@"Complete")]) {
         self.progressView.progressTintColor = UIColor.systemGreenColor;
-    } else if ([item.stage isEqualToString:YTKACELocalized(@"Failed")]) {
-        self.progressView.progressTintColor = UIColor.systemRedColor;
     }
+    if (item.failed) self.progressView.progressTintColor = UIColor.systemRedColor;
+}
+
+- (void)postChange {
+    [NSNotificationCenter.defaultCenter postNotificationName:YTKACEDownloadJobsDidChangeNotification object:self];
+}
+
+- (NSArray<NSDictionary *> *)jobSnapshot {
+    NSMutableArray<NSDictionary *> *jobs = [NSMutableArray array];
+    for (NSString *identifier in self.activeIdentifiers) {
+        YTKACEDownloadProgressItem *item = self.items[identifier];
+        if (item == nil) continue;
+        [jobs addObject:@{
+            @"identifier": item.identifier,
+            @"title": item.title ?: @"",
+            @"stage": item.stage ?: @"",
+            @"progress": @(item.progress),
+            @"downloadedBytes": @(item.downloadedBytes),
+            @"totalBytes": @(item.totalBytes),
+            @"failed": @(item.failed),
+            @"detail": item.detail ?: @"",
+            @"thumbnail": item.thumbnail ?: (id)NSNull.null
+        }];
+    }
+    return jobs;
+}
+
+- (void)removeItem:(NSString *)identifier {
+    if (self.items[identifier] == nil) return;
+    NSUInteger removedIndex = [self.activeIdentifiers indexOfObject:identifier];
+    [self.items removeObjectForKey:identifier];
+    [self.activeIdentifiers removeObject:identifier];
+    [self postChange];
+    if (self.items.count != 0) {
+        if ([self.visibleIdentifier isEqualToString:identifier] ||
+            self.items[self.visibleIdentifier] == nil) {
+            NSUInteger nextIndex = removedIndex == NSNotFound ? 0 :
+                MIN(removedIndex, self.activeIdentifiers.count - 1);
+            self.visibleIdentifier = self.activeIdentifiers[nextIndex];
+        }
+        [self renderItem:self.items[self.visibleIdentifier]];
+        [self layoutCard];
+        return;
+    }
+    self.visibleIdentifier = nil;
+    self.userHidden = NO;
+    [self.positionTimer invalidate];
+    self.positionTimer = nil;
+    [UIView animateWithDuration:0.22 animations:^{
+        self.card.alpha = 0.0;
+        self.card.transform = CGAffineTransformMakeTranslation(0.0, 14.0);
+    } completion:^(BOOL finished) {
+        (void)finished;
+        if (self.items.count != 0) return;
+        [self.card removeFromSuperview];
+        self.card.transform = CGAffineTransformIdentity;
+    }];
+}
+
+- (void)cancelOrDismissJob:(NSString *)identifier {
+    YTKACEDownloadProgressItem *item = self.items[identifier];
+    if (item == nil) return;
+    YTKACEDownloadLog(identifier, @"user %@ stage=%@", item.failed ? @"dismissed" : @"cancelled", item.stage);
+    if (item.failed) {
+        [self removeItem:identifier];
+    } else if (self.cancelHandler != nil) {
+        self.cancelHandler(identifier);
+    }
+}
+
+- (void)retryJob:(NSString *)identifier {
+    YTKACEDownloadProgressItem *item = self.items[identifier];
+    if (item == nil || !item.failed || self.retryHandler == nil) return;
+    [self removeItem:identifier];
+    self.retryHandler(identifier);
 }
 
 - (void)loadThumbnailForItem:(YTKACEDownloadProgressItem *)item {
@@ -269,12 +434,14 @@
             YTKACEDownloadProgressItem *current = self.items[identifier];
             current.thumbnail = image;
             if ([self.visibleIdentifier isEqualToString:identifier]) [self renderItem:current];
+            [self postChange];
         });
     }];
     [task resume];
 }
 
 - (void)cancelPendingDismiss {
+    if (self.suppressed || self.dragging) return;
     [self.card.layer removeAllAnimations];
     self.card.alpha = 1.0;
     self.card.transform = CGAffineTransformIdentity;
@@ -293,10 +460,12 @@
         [self.activeIdentifiers removeObject:identifier];
         [self.activeIdentifiers addObject:identifier];
         self.visibleIdentifier = identifier;
+        self.userHidden = NO;
         [self cancelPendingDismiss];
         [self renderItem:item];
         [self layoutCard];
         [self loadThumbnailForItem:item];
+        [self postChange];
     });
 }
 
@@ -317,6 +486,7 @@
         item.downloadedBytes = sameStage ? MAX(item.downloadedBytes, nextBytes) : nextBytes;
         item.totalBytes = MAX(totalBytes, 0);
         if ([self.visibleIdentifier isEqualToString:identifier]) [self renderItem:item];
+        [self postChange];
     });
 }
 
@@ -326,45 +496,40 @@
     dispatch_async(dispatch_get_main_queue(), ^{
         YTKACEDownloadProgressItem *item = self.items[identifier];
         if (item == nil) return;
-        item.stage = success ? YTKACELocalized(@"Complete") : (message.length != 0 ? message : YTKACELocalized(@"Failed"));
-        if (!success && ![item.stage isEqualToString:YTKACELocalized(@"Cancelled")]) item.stage = YTKACELocalized(@"Failed");
+        BOOL cancelled = !success && [message isEqualToString:YTKACELocalized(@"Cancelled")];
+        item.stage = success ? YTKACELocalized(@"Complete")
+            : (cancelled ? YTKACELocalized(@"Cancelled") : YTKACELocalized(@"Failed"));
+        item.failed = !success && !cancelled;
+        if (item.failed && message.length != 0 && ![message isEqualToString:YTKACELocalized(@"Failed")]) item.detail = message;
         item.progress = success ? 1.0 : item.progress;
+        if (item.failed) {
+            YTKACEDownloadLog(identifier, @"kept failed job on card detail=%@", item.detail ?: @"");
+            self.visibleIdentifier = identifier;
+            self.userHidden = NO;
+            [self renderItem:item];
+            [self postChange];
+            return;
+        }
         if ([self.visibleIdentifier isEqualToString:identifier]) [self renderItem:item];
+        [self postChange];
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 2 * NSEC_PER_SEC),
                        dispatch_get_main_queue(), ^{
-            NSUInteger removedIndex = [self.activeIdentifiers indexOfObject:identifier];
-            [self.items removeObjectForKey:identifier];
-            [self.activeIdentifiers removeObject:identifier];
-            if (self.items.count != 0) {
-                if ([self.visibleIdentifier isEqualToString:identifier] ||
-                    self.items[self.visibleIdentifier] == nil) {
-                    NSUInteger nextIndex = removedIndex == NSNotFound ? 0 :
-                        MIN(removedIndex, self.activeIdentifiers.count - 1);
-                    self.visibleIdentifier = self.activeIdentifiers[nextIndex];
-                }
-                [self renderItem:self.items[self.visibleIdentifier]];
-                [self layoutCard];
-                return;
-            }
-            self.visibleIdentifier = nil;
-            [self.positionTimer invalidate];
-            self.positionTimer = nil;
-            [UIView animateWithDuration:0.22 animations:^{
-                self.card.alpha = 0.0;
-                self.card.transform = CGAffineTransformMakeTranslation(0.0, 14.0);
-            } completion:^(BOOL finished) {
-                (void)finished;
-                [self.card removeFromSuperview];
-                self.card.transform = CGAffineTransformIdentity;
-            }];
+            if (self.items[identifier] == item) [self removeItem:identifier];
         });
     });
+}
+
+- (BOOL)gestureRecognizerShouldBegin:(UIGestureRecognizer *)gestureRecognizer {
+    if (![gestureRecognizer isKindOfClass:UIPanGestureRecognizer.class]) return YES;
+    CGPoint velocity = [(UIPanGestureRecognizer *)gestureRecognizer velocityInView:self.card];
+    return velocity.y > fabs(velocity.x);
 }
 
 - (BOOL)gestureRecognizer:(UIGestureRecognizer *)gestureRecognizer
        shouldReceiveTouch:(UITouch *)touch {
     (void)gestureRecognizer;
-    return ![touch.view isDescendantOfView:self.cancelButton];
+    return ![touch.view isDescendantOfView:self.cancelButton] &&
+        ![touch.view isDescendantOfView:self.retryButton];
 }
 
 - (void)cycleTapped {
@@ -380,7 +545,12 @@
 
 - (void)cancelTapped {
     NSString *identifier = self.visibleIdentifier;
-    if (identifier.length != 0 && self.cancelHandler != nil) self.cancelHandler(identifier);
+    if (identifier.length != 0) [self cancelOrDismissJob:identifier];
+}
+
+- (void)retryTapped {
+    NSString *identifier = self.visibleIdentifier;
+    if (identifier.length != 0) [self retryJob:identifier];
 }
 
 @end

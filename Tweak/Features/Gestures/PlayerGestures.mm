@@ -51,6 +51,7 @@ static const void *YTKACESeekLabelAssociation = &YTKACESeekLabelAssociation;
 @property(nonatomic, assign) NSInteger seekDirection;
 - (void)handleEdgePan:(UIPanGestureRecognizer *)recognizer;
 - (void)handleHold:(UILongPressGestureRecognizer *)recognizer;
+- (void)handleTwoFingerTap:(UITapGestureRecognizer *)recognizer;
 @end
 
 @implementation YTKACEGestureCoordinator
@@ -507,6 +508,18 @@ shouldRecognizeSimultaneouslyWithGestureRecognizer:(UIGestureRecognizer *)other 
     [UIView animateWithDuration:0.2 animations:^{ indicator.alpha = 1.0; }];
 }
 
+- (void)handleTwoFingerTap:(UITapGestureRecognizer *)recognizer {
+    if (recognizer.state != UIGestureRecognizerStateEnded ||
+        !YTKACEFeatureEnabled(@"YTKACE.Preference.Gestures.TwoFingerTap")) return;
+    SEL toggle = NSSelectorFromString(@"didTogglePlayPause");
+    for (UIResponder *responder = recognizer.view; responder != nil; responder = responder.nextResponder) {
+        if ([responder respondsToSelector:toggle]) {
+            ((void (*)(id, SEL))objc_msgSend)(responder, toggle);
+            return;
+        }
+    }
+}
+
 - (void)handleHold:(UILongPressGestureRecognizer *)recognizer {
     if (recognizer.state == UIGestureRecognizerStateBegan) {
         UIView *view = recognizer.view;
@@ -592,6 +605,13 @@ static void YTKACEAttachPlayerGestures(UIView *playerView,
     hold.cancelsTouchesInView = YES;
     hold.delegate = YTKACEGestureCoordinator.sharedCoordinator;
     [playerView addGestureRecognizer:hold];
+    UITapGestureRecognizer *twoFinger =
+        [[UITapGestureRecognizer alloc]
+            initWithTarget:YTKACEGestureCoordinator.sharedCoordinator
+                    action:@selector(handleTwoFingerTap:)];
+    twoFinger.numberOfTouchesRequired = 2;
+    twoFinger.cancelsTouchesInView = YES;
+    [playerView addGestureRecognizer:twoFinger];
     objc_setAssociatedObject(playerView,
                              YTKACELongPressAssociation,
                              hold,

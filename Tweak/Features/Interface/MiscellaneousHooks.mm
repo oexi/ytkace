@@ -239,14 +239,23 @@ static BOOL YTKACEAgeValue(id receiver, SEL selector) {
     return original != NULL ? ((BOOL (*)(id, SEL))original)(receiver, selector) : NO;
 }
 
+static NSInteger YTKACECaptionsMode(void) {
+    if (!YTKACEMasterEnabled()) return 0;
+    id stored = [NSUserDefaults.standardUserDefaults objectForKey:@"YTKACE.Preference.Playback.CaptionsMode"];
+    if ([stored respondsToSelector:@selector(integerValue)]) return MAX(0, MIN(2, [stored integerValue]));
+    if (YTKACEFeatureEnabled(@"YTKACE.Preference.Playback.CaptionsDisabled")) return 2;
+    if (YTKACEFeatureEnabled(@"YTKACE.Preference.Playback.CaptionsAlwaysOn")) return 1;
+    return 0;
+}
+
 static BOOL YTKACECaptionValue(id receiver, SEL selector) {
     NSString *name = NSStringFromSelector(selector).lowercaseString;
     BOOL negative = [name containsString:@"disabled"] ||
         [name containsString:@"hidden"];
-    if (YTKACEFeatureEnabled(@"YTKACE.Preference.Playback.CaptionsDisabled")) {
+    if ((YTKACECaptionsMode() == 2)) {
         return negative;
     }
-    if (YTKACEFeatureEnabled(@"YTKACE.Preference.Playback.CaptionsAlwaysOn")) {
+    if ((YTKACECaptionsMode() == 1)) {
         if (!YTKACECaptionRequestReceiver(receiver, selector)) {
             IMP original = YTKACEMiscOriginal(receiver, selector);
             return original != NULL
@@ -271,9 +280,9 @@ static void YTKACECaptionSetter(id receiver, SEL selector, BOOL enabled) {
     BOOL negative = [name containsString:@"disabled"] ||
         [name containsString:@"hidden"];
     BOOL value = enabled;
-    if (YTKACEFeatureEnabled(@"YTKACE.Preference.Playback.CaptionsDisabled")) {
+    if ((YTKACECaptionsMode() == 2)) {
         value = negative;
-    } else if (YTKACEFeatureEnabled(@"YTKACE.Preference.Playback.CaptionsAlwaysOn") &&
+    } else if ((YTKACECaptionsMode() == 1) &&
                YTKACECaptionRequestReceiver(receiver, selector)) {
         value = !negative;
     }
@@ -292,8 +301,58 @@ static id YTKACEFirstCaptionTrack(id tracks) {
     return nil;
 }
 
+static NSString *YTKACETrackText(id track, NSString *name) {
+    SEL selector = NSSelectorFromString(name);
+    if (![track respondsToSelector:selector]) return nil;
+    id value = ((id (*)(id, SEL))objc_msgSend)(track, selector);
+    return [value isKindOfClass:NSString.class] ? value : nil;
+}
+
+static id YTKACEBestCaptionTrackForLanguage(NSArray *tracks, NSString *language) {
+    if (language.length == 0) return nil;
+    NSString *base = [[language.lowercaseString componentsSeparatedByCharactersInSet:
+        [NSCharacterSet characterSetWithCharactersInString:@"-_"]] firstObject];
+    id best = nil;
+    NSInteger bestRank = NSIntegerMax;
+    for (id track in tracks) {
+        NSString *code = YTKACETrackText(track, @"languageCode").lowercaseString;
+        if (code.length == 0) continue;
+        NSString *codeBase = [[code componentsSeparatedByCharactersInSet:
+            [NSCharacterSet characterSetWithCharactersInString:@"-_"]] firstObject];
+        if (![code isEqualToString:language.lowercaseString] && ![codeBase isEqualToString:base]) continue;
+        NSString *vss = YTKACETrackText(track, @"VSSID") ?: @"";
+        NSInteger rank = [vss hasPrefix:@"."] ? 0 : ([vss hasPrefix:@"a."] ? 1 : 2);
+        if (rank < bestRank) {
+            bestRank = rank;
+            best = track;
+        }
+    }
+    return best;
+}
+
+static id YTKACEPreferredCaptionTrack(id tracks) {
+    id first = YTKACEFirstCaptionTrack(tracks);
+    if (first == nil) return nil;
+    NSArray *list = [tracks isKindOfClass:NSArray.class] ? tracks
+        : ([tracks respondsToSelector:@selector(allObjects)]
+            ? ((id (*)(id, SEL))objc_msgSend)(tracks, @selector(allObjects)) : nil);
+    if (![list isKindOfClass:NSArray.class]) return first;
+    NSString *preferred = [NSUserDefaults.standardUserDefaults
+        stringForKey:@"YTKACE.Preference.Playback.CaptionLanguage"];
+    id match = YTKACEBestCaptionTrackForLanguage(list, preferred);
+    for (NSString *language in NSLocale.preferredLanguages) {
+        if (match != nil) break;
+        match = YTKACEBestCaptionTrackForLanguage(list, language);
+    }
+    if (match != nil) return match;
+    for (id track in list) {
+        if (![[YTKACETrackText(track, @"VSSID") ?: @"" lowercaseString] hasPrefix:@"t"]) return track;
+    }
+    return first;
+}
+
 static void YTKACEScheduleCaptionSelection(id track) {
-    if (track == nil || !YTKACEFeatureEnabled(@"YTKACE.Preference.Playback.CaptionsAlwaysOn")) {
+    if (track == nil || !(YTKACECaptionsMode() == 1)) {
         return;
     }
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW,
@@ -353,7 +412,7 @@ static void YTKACECaptionTracksSetter(id receiver, SEL selector, id tracks) {
     if (original != NULL) {
         ((void (*)(id, SEL, id))original)(receiver, selector, tracks);
     }
-    id track = YTKACEFirstCaptionTrack(tracks);
+    id track = YTKACEPreferredCaptionTrack(tracks);
     id previousTrack = objc_getAssociatedObject(
         receiver, YTKACELastCaptionTrackAssociation);
     if (previousTrack != track) {
@@ -393,7 +452,7 @@ static void YTKACECaptionSelectedTrackSetter(id receiver,
 }
 
 static id YTKACECaptionTracks(id receiver, SEL selector) {
-    if (YTKACEFeatureEnabled(@"YTKACE.Preference.Playback.CaptionsDisabled")) {
+    if ((YTKACECaptionsMode() == 2)) {
         return @[];
     }
     id tracks = OriginalCaptionTracks != NULL
@@ -692,6 +751,12 @@ static void YTKACEDiscoverMiscHooks(void) {
 }
 
 void YTKACEInstallMiscellaneousHooks(void) {
+    NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
+    if ([defaults objectForKey:@"YTKACE.Preference.Playback.CaptionsMode"] == nil) {
+        NSInteger legacy = [defaults boolForKey:@"YTKACE.Preference.Playback.CaptionsDisabled"] ? 2
+            : ([defaults boolForKey:@"YTKACE.Preference.Playback.CaptionsAlwaysOn"] ? 1 : 0);
+        if (legacy != 0) [defaults setInteger:legacy forKey:@"YTKACE.Preference.Playback.CaptionsMode"];
+    }
     if (YTKACEMiscOriginals == nil) {
         YTKACEMiscOriginals = [NSMutableDictionary dictionary];
         YTKACECaptionControllers = [NSHashTable weakObjectsHashTable];

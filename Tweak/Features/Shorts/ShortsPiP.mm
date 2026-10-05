@@ -23,7 +23,7 @@ static id YTKACEShortsPiPOwner(id controller) {
 }
 
 static BOOL YTKACELibraryOwnsPiP(void) {
-    YTKACEDownloadPlaybackSession *session = YTKACEDownloadPlaybackSession.sharedSession;
+    YTKACEDownloadPlaybackSession *session = YTKACEDownloadPlaybackSession.existingSession;
     return session.currentURL != nil && session.player.rate != 0.0f;
 }
 

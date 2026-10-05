@@ -4,6 +4,7 @@
 #import "../../Settings/YTKACEDownloadsController.h"
 #import "../../UI/Assets.h"
 #import "../Interface/NavigationVisibility.h"
+#import "../Downloads/DownloadLog.h"
 
 #import <UIKit/UIKit.h>
 #import <objc/message.h>
@@ -2923,10 +2924,132 @@ static void YTKACEApplyMinimizeProgress(UIView *bar, CGFloat progress, BOOL trac
 
 static IMP OriginalScrollSetContentOffset;
 
+static NSUInteger YTKACEShortsClipGeneration;
+
+static NSArray<UIView *> *YTKACEShortsClipViews(UIScrollView *pager) {
+    NSMutableArray<UIView *> *views = [NSMutableArray arrayWithObject:pager];
+    for (UIView *view = pager.superview.superview.superview; view != nil && views.count < 3; view = view.superview) {
+        if ([view isKindOfClass:NSClassFromString(@"YTAppView")]) break;
+        if (view.clipsToBounds) [views addObject:view];
+    }
+    return views;
+}
+
+static const void *YTKACEShortsClipViewsAssociation = &YTKACEShortsClipViewsAssociation;
+static const void *YTKACEShortsCoverAssociation = &YTKACEShortsCoverAssociation;
+
+static UIView *YTKACEShortsCover(UIScrollView *pager, NSArray<UIView *> *views, BOOL create) {
+    UIView *cover = objc_getAssociatedObject(pager, YTKACEShortsCoverAssociation);
+    if (cover != nil || !create) return cover;
+    UIView *outer = views.lastObject;
+    if (outer == nil || outer.window == nil) return nil;
+    CGRect frame = [outer convertRect:outer.bounds toView:nil];
+    CGFloat below = CGRectGetHeight(outer.window.bounds) - CGRectGetMaxY(frame);
+    if (below <= 0.5) return nil;
+    cover = [[UIView alloc] initWithFrame:CGRectMake(0.0, CGRectGetHeight(outer.bounds), CGRectGetWidth(outer.bounds), below)];
+    cover.backgroundColor = UIColor.blackColor;
+    cover.userInteractionEnabled = NO;
+    cover.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleTopMargin;
+    [outer addSubview:cover];
+    UIView *backing = [[UIView alloc] initWithFrame:[outer.superview convertRect:cover.frame fromView:outer]];
+    backing.backgroundColor = UIColor.blackColor;
+    backing.userInteractionEnabled = NO;
+    backing.autoresizingMask = cover.autoresizingMask;
+    [outer.superview insertSubview:backing belowSubview:outer];
+    objc_setAssociatedObject(cover, YTKACEShortsCoverAssociation, backing, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    objc_setAssociatedObject(pager, YTKACEShortsCoverAssociation, cover, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    return cover;
+}
+
+static void YTKACEFadeShortsCover(UIView *cover, CGFloat alpha, void (^completion)(BOOL finished)) {
+    [UIView animateWithDuration:0.2 delay:0.0
+                        options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction
+                     animations:^{ cover.alpha = alpha; }
+                     completion:completion];
+}
+
+static void YTKACESetShortsClipping(UIScrollView *pager, BOOL clips) {
+    NSArray<UIView *> *views = objc_getAssociatedObject(pager, YTKACEShortsClipViewsAssociation);
+    if (!clips) {
+        if (views == nil) {
+            views = YTKACEShortsClipViews(pager);
+            objc_setAssociatedObject(pager, YTKACEShortsClipViewsAssociation, views, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        }
+        UIView *cover = YTKACEShortsCover(pager, views, YES);
+        cover.alpha = 1.0;
+        for (UIView *view in views) view.clipsToBounds = NO;
+        if (cover != nil) YTKACEFadeShortsCover(cover, 0.0, nil);
+        return;
+    }
+    UIView *cover = YTKACEShortsCover(pager, views, NO);
+    void (^reclip)(void) = ^{
+        for (UIView *view in views) view.clipsToBounds = YES;
+        [(UIView *)objc_getAssociatedObject(cover, YTKACEShortsCoverAssociation) removeFromSuperview];
+        [cover removeFromSuperview];
+        objc_setAssociatedObject(pager, YTKACEShortsCoverAssociation, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        objc_setAssociatedObject(pager, YTKACEShortsClipViewsAssociation, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    };
+    if (cover == nil) {
+        reclip();
+        return;
+    }
+    NSUInteger generation = YTKACEShortsClipGeneration;
+    __weak UIScrollView *weakPager = pager;
+    YTKACEFadeShortsCover(cover, 1.0, ^(__unused BOOL finished) {
+        UIScrollView *strongPager = weakPager;
+        if (strongPager == nil || generation != YTKACEShortsClipGeneration ||
+            strongPager.isDragging || strongPager.isDecelerating) return;
+        reclip();
+    });
+}
+
+static void YTKACEScheduleShortsReclip(UIScrollView *pager, NSUInteger generation) {
+    __weak UIScrollView *weakPager = pager;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.25 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        UIScrollView *strongPager = weakPager;
+        if (strongPager == nil || generation != YTKACEShortsClipGeneration) return;
+        if (strongPager.isDragging || strongPager.isDecelerating) {
+            YTKACEScheduleShortsReclip(strongPager, generation);
+            return;
+        }
+        YTKACESetShortsClipping(strongPager, YES);
+    });
+}
+
+static void YTKACEShortsSeeThrough(UIScrollView *receiver) {
+    static Class pagerClass;
+    static Class rootClass;
+    if (pagerClass == Nil) {
+        pagerClass = NSClassFromString(@"YTAsyncCollectionView");
+        rootClass = NSClassFromString(@"YTReelWatchRootView");
+    }
+    if (pagerClass == Nil || rootClass == Nil || [receiver class] != pagerClass) return;
+    if (![receiver.superview.superview isKindOfClass:rootClass]) return;
+    if (!receiver.isDragging && !receiver.isDecelerating) return;
+    UIView *cover = objc_getAssociatedObject(receiver, YTKACEShortsCoverAssociation);
+    if (cover != nil && cover.layer.presentationLayer.opacity > 0.01 && cover.alpha > 0.0) {
+        YTKACEFadeShortsCover(cover, 0.0, nil);
+    }
+    if (objc_getAssociatedObject(receiver, YTKACEShortsClipViewsAssociation) == nil) {
+        YTKACESetShortsClipping(receiver, NO);
+        static BOOL logged;
+        if (!logged) {
+            logged = YES;
+            NSMutableArray *names = [NSMutableArray array];
+            for (UIView *view in objc_getAssociatedObject(receiver, YTKACEShortsClipViewsAssociation))
+                [names addObject:[NSString stringWithFormat:@"%@%@", NSStringFromClass(view.class),
+                                  NSStringFromCGRect([view convertRect:view.bounds toView:nil])]];
+            YTKACEDownloadLog(@"glass", @"shorts unclip %@", [names componentsJoinedByString:@" < "]);
+        }
+    }
+    YTKACEScheduleShortsReclip(receiver, ++YTKACEShortsClipGeneration);
+}
+
 static void YTKACEScrollSetContentOffset(UIScrollView *receiver, SEL selector, CGPoint offset) {
     if (OriginalScrollSetContentOffset != NULL) {
         ((void (*)(id, SEL, CGPoint))OriginalScrollSetContentOffset)(receiver, selector, offset);
     }
+    YTKACEShortsSeeThrough(receiver);
     if (!YTKACEMinimizeEnabled) return;
     UIView *bar = YTKACEMinimizeBar;
     if (bar == nil) return;
@@ -2980,6 +3103,24 @@ static void YTKACEUpdatePivotBarVisibility(id receiver, SEL selector, UIScrollVi
     if (OriginalUpdatePivotBarVisibility != NULL) {
         ((void (*)(id, SEL, id, CGFloat, BOOL))OriginalUpdatePivotBarVisibility)(
             receiver, selector, scrollView, offsetY, atBottom);
+    }
+}
+
+static const void *YTKACEShortsBackdropAssociation = &YTKACEShortsBackdropAssociation;
+
+static void YTKACEApplyShortsBackdrop(UIView *bar, BOOL shorts) {
+    UIView *host = bar.superview;
+    if (host == nil) return;
+    id saved = objc_getAssociatedObject(host, YTKACEShortsBackdropAssociation);
+    if (shorts) {
+        if (saved == nil) {
+            objc_setAssociatedObject(host, YTKACEShortsBackdropAssociation, host.backgroundColor ?: (id)NSNull.null,
+                                     OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        }
+        host.backgroundColor = UIColor.blackColor;
+    } else if (saved != nil) {
+        host.backgroundColor = saved == NSNull.null ? nil : saved;
+        objc_setAssociatedObject(host, YTKACEShortsBackdropAssociation, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
 }
 
@@ -3080,6 +3221,7 @@ static BOOL YTKACEApplyPivotBarGlass(UIView *receiver, UIView *blur) {
     glass.frame = frame;
     glass.layer.cornerRadius = CGRectGetHeight(frame) * 0.5;
     YTKACEUpdateMiniMask(receiver, frame);
+    YTKACEApplyShortsBackdrop(receiver, darkBar);
     UIUserInterfaceStyle style = darkBar ? UIUserInterfaceStyleDark : UIUserInterfaceStyleUnspecified;
     if (glass.overrideUserInterfaceStyle != UIUserInterfaceStyleUnspecified) {
         glass.overrideUserInterfaceStyle = UIUserInterfaceStyleUnspecified;
@@ -3106,6 +3248,22 @@ static BOOL YTKACESearchOptOutFrostedPivot(__unused id receiver, __unused SEL se
     return NO;
 }
 
+NSInteger YTKACEFrostedTabBarMode(void) {
+    id stored = [NSUserDefaults.standardUserDefaults objectForKey:@"YTKACE.Preference.Tabs.Frosted"];
+    if ([stored respondsToSelector:@selector(integerValue)]) return MAX(0, MIN(2, [stored integerValue]));
+    return YTKACEFeatureEnabled(@"YTKACE.Preference.Tabs.FrostedHidden") ? 2 : 0;
+}
+
+static IMP OriginalFrostedPermitted;
+
+static BOOL YTKACEFrostedPermitted(id receiver, SEL selector) {
+    NSInteger mode = YTKACEMasterEnabled() ? YTKACEFrostedTabBarMode() : 0;
+    if (YTKACELiquidGlassAvailable() && YTKACEFeatureEnabled(@"YTKACE.Preference.Tabs.Glass")) return YES;
+    if (mode == 1) return YES;
+    if (mode == 2) return NO;
+    return OriginalFrostedPermitted != NULL && ((BOOL (*)(id, SEL))OriginalFrostedPermitted)(receiver, selector);
+}
+
 static void YTKACEApplyPivotBarBackground(UIView *receiver) {
     if (YTKACERefreshTabTint()) {
         for (UIView *item in YTKACESortedPivotItems(receiver)) {
@@ -3120,7 +3278,7 @@ static void YTKACEApplyPivotBarBackground(UIView *receiver) {
     if (YTKACEApplyPivotBarGlass(receiver, blur)) return;
     BOOL applied = [objc_getAssociatedObject(
         receiver, YTKACEPivotBarSolidAssociation) boolValue];
-    if (!YTKACEFeatureEnabled(@"YTKACE.Preference.Tabs.FrostedHidden")) {
+    if (!YTKACEMasterEnabled() || YTKACEFrostedTabBarMode() != 2) {
         if (!applied) return;
         blur.hidden = NO;
         receiver.backgroundColor = UIColor.clearColor;
@@ -3452,6 +3610,10 @@ void YTKACEInstallTabBarHooks(void) {
                                   (IMP)YTKACESearchOptOutFrostedPivot,
                                   &OriginalSearchOptOutFrostedPivot);
     }
+    YTKACEInstallInstanceHook(@"YTPivotBarViewController",
+                              @"isFrostedPivotBarPermitted",
+                              (IMP)YTKACEFrostedPermitted,
+                              &OriginalFrostedPermitted);
     YTKACEInstallInstanceHook(@"YTPivotBarView",
                               @"hitTest:withEvent:",
                               (IMP)YTKACEPivotBarHitTest,

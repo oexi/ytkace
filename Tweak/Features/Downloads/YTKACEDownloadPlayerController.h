@@ -19,6 +19,7 @@ extern NSNotificationName const YTKACELibraryFullPlayerWillHideNotification;
 @interface YTKACEDownloadPlaybackSession : NSObject
 
 + (instancetype)sharedSession;
++ (nullable instancetype)existingSession;
 
 @property(nonatomic, strong, readonly) AVPlayer *player;
 @property(nonatomic, copy, readonly, nullable) NSURL *currentURL;

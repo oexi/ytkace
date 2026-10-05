@@ -13,8 +13,10 @@
 #import "../Features/Downloads/YTKACEAudioPlayerController.h"
 #import "../Features/Downloads/MediaArtwork.h"
 #import "../Features/Downloads/DownloadSponsor.h"
+#import "../Features/Downloads/DownloadProgressView.h"
 
 #import <AVFoundation/AVFoundation.h>
+#import <ImageIO/ImageIO.h>
 #import <CoreMedia/CoreMedia.h>
 #import <AVKit/AVKit.h>
 #import <math.h>
@@ -134,8 +136,7 @@ static void YTKACESaveVideoToPhotos(NSURL *url) {
 @implementation YTKACEDownloadCell
 
 - (void)applyTheme {
-    self.cardView.backgroundColor =
-        YTKACEInterfaceSurfaceColor(self.traitCollection);
+    self.cardView.backgroundColor = UIColor.clearColor;
     self.thumbnailView.backgroundColor =
         YTKACEInterfaceSurfaceColor(self.traitCollection);
     self.placeholderView.tintColor = UIColor.tertiaryLabelColor;
@@ -148,11 +149,11 @@ static void YTKACESaveVideoToPhotos(NSURL *url) {
         return nil;
     }
     self.cardView = [UIView new];
-    self.cardView.layer.cornerRadius = 12.0;
-    self.cardView.layer.masksToBounds = YES;
     self.thumbnailView = [UIImageView new];
     self.thumbnailView.contentMode = UIViewContentModeScaleAspectFill;
     self.thumbnailView.clipsToBounds = YES;
+    self.thumbnailView.layer.cornerRadius = 12.0;
+    self.thumbnailView.layer.cornerCurve = kCACornerCurveContinuous;
     self.placeholderView = [[UIImageView alloc] initWithImage:
         [[UIImage systemImageNamed:@"video.slash.fill"]
             imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate]];
@@ -207,39 +208,48 @@ static void YTKACESaveVideoToPhotos(NSURL *url) {
 
 - (void)layoutSubviews {
     [super layoutSubviews];
+    CGAffineTransform pressTransform = self.cardView.transform;
+    self.cardView.transform = CGAffineTransformIdentity;
     CGFloat width = CGRectGetWidth(self.contentView.bounds);
     CGFloat height = CGRectGetHeight(self.contentView.bounds);
     if (self.layoutMode == 0) {
-        CGFloat cardWidth = MIN(520.0, width - 20.0);
-        self.cardView.frame = CGRectMake((width - cardWidth) * 0.5, 7.0,
-                                         cardWidth, height - 14.0);
-        self.thumbnailView.frame = CGRectMake(0.0, 0.0, cardWidth, 188.0);
-        self.placeholderView.frame = CGRectMake((cardWidth - 92.0) * 0.5, 48.0, 92.0, 92.0);
-        self.resolutionLabel.frame = CGRectMake(9.0, 159.0, 42.0, 21.0);
-        self.durationLabel.frame = CGRectMake(cardWidth - 59.0, 159.0, 50.0, 21.0);
-        self.nameLabel.frame = CGRectMake(11.0, 196.0, cardWidth - 22.0, 38.0);
-        self.metadataLabel.frame = CGRectMake(11.0, 237.0, cardWidth - 22.0, 18.0);
+        CGFloat cardWidth = MIN(720.0, width - 24.0);
+        CGFloat thumb = round(cardWidth * 9.0 / 16.0);
+        self.cardView.frame = CGRectMake((width - cardWidth) * 0.5, 6.0, cardWidth, height - 12.0);
+        self.thumbnailView.frame = CGRectMake(0.0, 0.0, cardWidth, thumb);
+        self.placeholderView.frame = CGRectMake((cardWidth - 92.0) * 0.5, (thumb - 92.0) * 0.5, 92.0, 92.0);
+        self.resolutionLabel.frame = CGRectMake(8.0, thumb - 27.0, 42.0, 19.0);
+        self.durationLabel.frame = CGRectMake(cardWidth - 52.0, thumb - 27.0, 44.0, 19.0);
+        self.nameLabel.frame = CGRectMake(2.0, thumb + 10.0, cardWidth - 4.0, 38.0);
+        self.metadataLabel.frame = CGRectMake(2.0, thumb + 50.0, cardWidth - 4.0, 18.0);
+        self.metadataLabel.textAlignment = NSTextAlignmentLeft;
     } else if (self.layoutMode == 1) {
-        self.cardView.frame = CGRectMake(9.0, 5.0, width - 18.0, height - 10.0);
+        self.cardView.frame = CGRectMake(12.0, 6.0, width - 24.0, height - 12.0);
+        CGFloat cardWidth = CGRectGetWidth(self.cardView.bounds);
         CGFloat cardHeight = CGRectGetHeight(self.cardView.bounds);
-        self.thumbnailView.frame = CGRectMake(0.0, 0.0, 116.0, cardHeight);
-        self.placeholderView.frame = CGRectMake(35.0, 17.0, 46.0, 46.0);
-        self.resolutionLabel.frame = CGRectMake(7.0, cardHeight - 25.0, 42.0, 19.0);
-        self.durationLabel.frame = CGRectMake(width - 76.0, cardHeight - 25.0, 44.0, 19.0);
-        self.nameLabel.frame = CGRectMake(128.0, 9.0, width - 160.0, 38.0);
-        self.metadataLabel.frame = CGRectMake(128.0, cardHeight - 27.0, width - 205.0, 18.0);
+        CGFloat thumbWidth = round(cardHeight * 16.0 / 9.0);
+        self.thumbnailView.frame = CGRectMake(0.0, 0.0, thumbWidth, cardHeight);
+        self.placeholderView.frame = CGRectMake((thumbWidth - 40.0) * 0.5, (cardHeight - 40.0) * 0.5, 40.0, 40.0);
+        self.resolutionLabel.frame = CGRectMake(6.0, cardHeight - 24.0, 42.0, 18.0);
+        self.durationLabel.frame = CGRectMake(thumbWidth - 50.0, cardHeight - 24.0, 44.0, 18.0);
+        CGFloat textX = thumbWidth + 12.0;
+        self.nameLabel.frame = CGRectMake(textX, 2.0, MAX(0.0, cardWidth - textX), 38.0);
+        self.metadataLabel.frame = CGRectMake(textX, 42.0, MAX(0.0, cardWidth - textX), 18.0);
+        self.metadataLabel.textAlignment = NSTextAlignmentLeft;
     } else {
         self.cardView.frame = CGRectInset(self.contentView.bounds, 3.0, 4.0);
         CGFloat cardWidth = CGRectGetWidth(self.cardView.bounds);
-        self.thumbnailView.frame = CGRectMake(0.0, 0.0, cardWidth, 112.0);
-        self.placeholderView.frame = CGRectMake((cardWidth - 56.0) * 0.5, 25.0, 56.0, 56.0);
-        self.resolutionLabel.frame = CGRectMake(7.0, 86.0, 42.0, 19.0);
-        self.durationLabel.frame = CGRectMake(cardWidth - 51.0, 7.0, 44.0, 19.0);
-        self.nameLabel.frame = CGRectMake(7.0, 118.0, cardWidth - 14.0, 35.0);
-        self.metadataLabel.frame = CGRectMake(7.0, 155.0, cardWidth - 14.0, 17.0);
-        self.metadataLabel.textAlignment = NSTextAlignmentRight;
+        CGFloat thumb = round(cardWidth * 9.0 / 16.0);
+        self.thumbnailView.frame = CGRectMake(0.0, 0.0, cardWidth, thumb);
+        self.placeholderView.frame = CGRectMake((cardWidth - 56.0) * 0.5, (thumb - 56.0) * 0.5, 56.0, 56.0);
+        self.resolutionLabel.frame = CGRectMake(6.0, thumb - 24.0, 42.0, 18.0);
+        self.durationLabel.frame = CGRectMake(cardWidth - 50.0, thumb - 24.0, 44.0, 18.0);
+        self.nameLabel.frame = CGRectMake(1.0, thumb + 7.0, cardWidth - 2.0, 36.0);
+        self.metadataLabel.frame = CGRectMake(1.0, thumb + 44.0, cardWidth - 2.0, 17.0);
+        self.metadataLabel.textAlignment = NSTextAlignmentLeft;
     }
     [self layoutProgressBar];
+    self.cardView.transform = pressTransform;
 }
 
 - (void)setWatchedRatio:(CGFloat)watchedRatio {
@@ -276,8 +286,20 @@ static void YTKACESaveVideoToPhotos(NSURL *url) {
     [self.thumbnailView bringSubviewToFront:self.progressTrack];
 }
 
+- (void)setHighlighted:(BOOL)highlighted {
+    [super setHighlighted:highlighted];
+    [UIView animateWithDuration:highlighted ? 0.12 : 0.25 delay:0.0
+                        options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction
+                     animations:^{
+        self.cardView.transform = highlighted ? CGAffineTransformMakeScale(0.97, 0.97) : CGAffineTransformIdentity;
+        self.cardView.alpha = highlighted ? 0.8 : 1.0;
+    } completion:nil];
+}
+
 - (void)prepareForReuse {
     [super prepareForReuse];
+    self.cardView.transform = CGAffineTransformIdentity;
+    self.cardView.alpha = 1.0;
     self.watchedRatio = 0.0;
     self.representedPath = nil;
     self.thumbnailView.image = nil;
@@ -287,6 +309,186 @@ static void YTKACESaveVideoToPhotos(NSURL *url) {
     self.metadataLabel.textAlignment = NSTextAlignmentLeft;
 }
 
+@end
+
+
+@interface YTKACEDownloadJobRow : UIView
+@property(nonatomic, copy) NSString *identifier;
+@property(nonatomic, strong) UIView *cardView;
+@property(nonatomic, strong) UIImageView *thumbnailView;
+@property(nonatomic, strong) UIView *dimView;
+@property(nonatomic, strong) UILabel *percentLabel;
+@property(nonatomic, strong) UIImageView *failedIcon;
+@property(nonatomic, strong) UIView *trackView;
+@property(nonatomic, strong) UIView *fillView;
+@property(nonatomic, assign) double progress;
+@property(nonatomic, strong) UILabel *titleLabel;
+@property(nonatomic, strong) UILabel *statusLabel;
+@property(nonatomic, strong) UIButton *retryButton;
+@property(nonatomic, strong) UIButton *closeButton;
+@end
+
+@implementation YTKACEDownloadJobRow
+- (instancetype)initWithFrame:(CGRect)frame {
+    self = [super initWithFrame:frame];
+    if (self) {
+        self.cardView = [UIView new];
+        [self addSubview:self.cardView];
+        self.thumbnailView = [UIImageView new];
+        self.thumbnailView.contentMode = UIViewContentModeScaleAspectFill;
+        self.thumbnailView.clipsToBounds = YES;
+        self.thumbnailView.layer.cornerRadius = 12.0;
+        self.thumbnailView.layer.cornerCurve = kCACornerCurveContinuous;
+        [self.cardView addSubview:self.thumbnailView];
+        self.dimView = [UIView new];
+        self.dimView.backgroundColor = [UIColor colorWithWhite:0.0 alpha:0.45];
+        [self.thumbnailView addSubview:self.dimView];
+        self.percentLabel = [UILabel new];
+        self.percentLabel.font = [UIFont monospacedDigitSystemFontOfSize:17.0 weight:UIFontWeightBold];
+        self.percentLabel.textColor = UIColor.whiteColor;
+        self.percentLabel.textAlignment = NSTextAlignmentCenter;
+        [self.thumbnailView addSubview:self.percentLabel];
+        self.failedIcon = [[UIImageView alloc] initWithImage:
+            [UIImage systemImageNamed:@"exclamationmark.triangle.fill"]];
+        self.failedIcon.tintColor = UIColor.systemRedColor;
+        self.failedIcon.contentMode = UIViewContentModeScaleAspectFit;
+        [self.thumbnailView addSubview:self.failedIcon];
+        self.trackView = [UIView new];
+        self.trackView.backgroundColor = [UIColor colorWithWhite:1.0 alpha:0.35];
+        [self.thumbnailView addSubview:self.trackView];
+        self.fillView = [UIView new];
+        [self.trackView addSubview:self.fillView];
+        self.titleLabel = [UILabel new];
+        self.titleLabel.font = [UIFont systemFontOfSize:14.0 weight:UIFontWeightSemibold];
+        self.titleLabel.numberOfLines = 2;
+        [self.cardView addSubview:self.titleLabel];
+        self.statusLabel = [UILabel new];
+        self.statusLabel.font = [UIFont monospacedDigitSystemFontOfSize:12.0 weight:UIFontWeightRegular];
+        self.statusLabel.adjustsFontSizeToFitWidth = YES;
+        self.statusLabel.minimumScaleFactor = 0.8;
+        [self.cardView addSubview:self.statusLabel];
+        self.retryButton = [UIButton buttonWithType:UIButtonTypeSystem];
+        [self.retryButton setImage:[UIImage systemImageNamed:@"arrow.clockwise"] forState:UIControlStateNormal];
+        [self.retryButton addTarget:self action:@selector(retryTapped) forControlEvents:UIControlEventTouchUpInside];
+        [self.cardView addSubview:self.retryButton];
+        self.closeButton = [UIButton buttonWithType:UIButtonTypeSystem];
+        [self.closeButton setImage:[UIImage systemImageNamed:@"xmark"] forState:UIControlStateNormal];
+        [self.closeButton addTarget:self action:@selector(closeTapped) forControlEvents:UIControlEventTouchUpInside];
+        [self.cardView addSubview:self.closeButton];
+    }
+    return self;
+}
+
+- (void)layoutSubviews {
+    [super layoutSubviews];
+    self.cardView.frame = CGRectMake(12.0, 6.0, CGRectGetWidth(self.bounds) - 24.0, CGRectGetHeight(self.bounds) - 12.0);
+    CGFloat cardWidth = CGRectGetWidth(self.cardView.bounds);
+    CGFloat cardHeight = CGRectGetHeight(self.cardView.bounds);
+    CGFloat thumbWidth = round(cardHeight * 16.0 / 9.0);
+    self.thumbnailView.frame = CGRectMake(0.0, 0.0, thumbWidth, cardHeight);
+    self.dimView.frame = self.thumbnailView.bounds;
+    self.percentLabel.frame = self.thumbnailView.bounds;
+    self.failedIcon.frame = CGRectMake((thumbWidth - 28.0) * 0.5, (cardHeight - 28.0) * 0.5, 28.0, 28.0);
+    self.trackView.frame = CGRectMake(0.0, cardHeight - 3.0, thumbWidth, 3.0);
+    self.fillView.frame = CGRectMake(0.0, 0.0, thumbWidth * self.progress, 3.0);
+    CGFloat buttons = self.retryButton.hidden ? 36.0 : 70.0;
+    self.closeButton.frame = CGRectMake(cardWidth - 36.0, (cardHeight - 32.0) * 0.5, 32.0, 32.0);
+    self.retryButton.frame = CGRectMake(cardWidth - 70.0, (cardHeight - 32.0) * 0.5, 32.0, 32.0);
+    CGFloat textX = thumbWidth + 12.0;
+    CGFloat textWidth = MAX(0.0, cardWidth - textX - buttons - 6.0);
+    self.titleLabel.frame = CGRectMake(textX, 2.0, textWidth, 38.0);
+    self.statusLabel.frame = CGRectMake(textX, 42.0, textWidth, 18.0);
+}
+
+- (void)applyJob:(NSDictionary *)job {
+    self.identifier = job[@"identifier"];
+    BOOL failed = [job[@"failed"] boolValue];
+    self.cardView.backgroundColor = UIColor.clearColor;
+    self.thumbnailView.backgroundColor = YTKACEInterfaceSurfaceColor(self.traitCollection);
+    self.titleLabel.text = job[@"title"];
+    self.titleLabel.textColor = UIColor.labelColor;
+    id thumbnail = job[@"thumbnail"];
+    self.thumbnailView.image = [thumbnail isKindOfClass:UIImage.class] ? thumbnail : nil;
+    double progress = [job[@"progress"] doubleValue];
+    self.progress = isfinite(progress) ? MAX(0.0, MIN(1.0, progress)) : 0.0;
+    self.percentLabel.text = [NSString stringWithFormat:@"%.0f%%", self.progress * 100.0];
+    self.percentLabel.hidden = failed;
+    self.failedIcon.hidden = !failed;
+    self.dimView.backgroundColor = [UIColor colorWithWhite:0.0 alpha:failed ? 0.6 : 0.45];
+    self.fillView.backgroundColor = failed ? UIColor.systemRedColor : YTKACEAccentColor();
+    NSString *status = job[@"stage"];
+    if (failed) {
+        NSString *detail = job[@"detail"];
+        if (detail.length != 0) status = [NSString stringWithFormat:@"%@ · %@", status, detail];
+    } else {
+        int64_t done = [job[@"downloadedBytes"] longLongValue];
+        int64_t total = [job[@"totalBytes"] longLongValue];
+        if (done > 0 && total > 0) {
+            status = [NSString stringWithFormat:@"%@ · %@ / %@", status,
+                [NSByteCountFormatter stringFromByteCount:done countStyle:NSByteCountFormatterCountStyleFile],
+                [NSByteCountFormatter stringFromByteCount:total countStyle:NSByteCountFormatterCountStyleFile]];
+        }
+    }
+    self.statusLabel.text = status;
+    self.statusLabel.textColor = failed ? UIColor.systemRedColor : UIColor.secondaryLabelColor;
+    self.retryButton.tintColor = UIColor.labelColor;
+    self.closeButton.tintColor = UIColor.secondaryLabelColor;
+    self.retryButton.hidden = !failed;
+    [self setNeedsLayout];
+}
+
+- (void)retryTapped {
+    if (self.identifier.length != 0) [YTKACEDownloadProgressView.sharedView retryJob:self.identifier];
+}
+
+- (void)closeTapped {
+    if (self.identifier.length != 0) [YTKACEDownloadProgressView.sharedView cancelOrDismissJob:self.identifier];
+}
+@end
+
+@interface YTKACEDownloadJobsHeader : UICollectionReusableView
+@property(nonatomic, strong) UILabel *headerLabel;
+@property(nonatomic, strong) NSMutableArray<YTKACEDownloadJobRow *> *rows;
+- (void)applyJobs:(NSArray<NSDictionary *> *)jobs;
+@end
+
+@implementation YTKACEDownloadJobsHeader
+- (instancetype)initWithFrame:(CGRect)frame {
+    self = [super initWithFrame:frame];
+    if (self) {
+        self.clipsToBounds = YES;
+        self.rows = [NSMutableArray array];
+        self.headerLabel = [UILabel new];
+        self.headerLabel.text = YTKACELocalized(@"Downloading");
+        self.headerLabel.font = [UIFont systemFontOfSize:13.0 weight:UIFontWeightSemibold];
+        self.headerLabel.textColor = UIColor.secondaryLabelColor;
+        [self addSubview:self.headerLabel];
+    }
+    return self;
+}
+
+- (void)applyJobs:(NSArray<NSDictionary *> *)jobs {
+    while (self.rows.count < jobs.count) {
+        YTKACEDownloadJobRow *row = [YTKACEDownloadJobRow new];
+        [self addSubview:row];
+        [self.rows addObject:row];
+    }
+    while (self.rows.count > jobs.count) {
+        [self.rows.lastObject removeFromSuperview];
+        [self.rows removeLastObject];
+    }
+    for (NSUInteger index = 0; index < jobs.count; index++) [self.rows[index] applyJob:jobs[index]];
+    [self setNeedsLayout];
+}
+
+- (void)layoutSubviews {
+    [super layoutSubviews];
+    CGFloat width = CGRectGetWidth(self.bounds);
+    self.headerLabel.frame = CGRectMake(18.0, 6.0, width - 36.0, 20.0);
+    for (NSUInteger index = 0; index < self.rows.count; index++) {
+        self.rows[index].frame = CGRectMake(0.0, 28.0 + 92.0 * index, width, 92.0);
+    }
+}
 @end
 
 @interface YTKACEDownloadsController ()
@@ -300,9 +502,12 @@ static void YTKACESaveVideoToPhotos(NSURL *url) {
 @property(nonatomic, strong) UIButton *libraryButton;
 @property(nonatomic, strong) UIButton *sortButton;
 @property(nonatomic, copy) NSArray<NSURL *> *files;
+@property(nonatomic, copy) NSArray<NSDictionary *> *jobs;
 @property(nonatomic, assign) NSInteger layoutMode;
 @property(nonatomic, assign) NSInteger sortMode;
 @property(nonatomic, strong) NSCache<NSString *, NSDictionary *> *metadataCache;
+@property(nonatomic, strong) NSOperationQueue *metadataQueue;
+@property(nonatomic, strong) NSMutableSet<NSString *> *metadataLoading;
 @property(nonatomic, strong) UIView *miniPlayerBar;
 @property(nonatomic, strong) YTKACEMiniPlayerView *miniVideoView;
 @property(nonatomic, strong) UILabel *miniTitleLabel;
@@ -311,8 +516,8 @@ static void YTKACESaveVideoToPhotos(NSURL *url) {
 @end
 
 static NSString *YTKACECategoryKey(NSInteger segment) {
-    NSArray<NSString *> *names = @[@"Video", @"Audio", @"Shorts"];
-    NSInteger index = MAX(0, MIN(segment, 2));
+    NSArray<NSString *> *names = @[@"All", @"Video", @"Audio", @"Shorts"];
+    NSInteger index = MAX(0, MIN(segment, 3));
     return names[(NSUInteger)index];
 }
 
@@ -352,13 +557,20 @@ static void YTKACEStoreMode(NSString *field, NSInteger segment, NSInteger mode) 
     self.view.accessibilityIdentifier = @"YTKACEDownloadsRoot";
     self.title = YTKACELocalized(@"Downloads");
     self.metadataCache = [NSCache new];
+    self.metadataQueue = [NSOperationQueue new];
+    self.metadataQueue.maxConcurrentOperationCount = 3;
+    self.metadataQueue.qualityOfService = NSQualityOfServiceUserInitiated;
+    self.metadataLoading = [NSMutableSet set];
     self.segmentedControl = [[UISegmentedControl alloc] initWithItems:@[
-        YTKACELocalized(@"Video"), YTKACELocalized(@"Audio"),
+        YTKACELocalized(@"All"), YTKACELocalized(@"Video"), YTKACELocalized(@"Audio"),
         YTKACELocalized(@"Shorts")
     ]];
-    id storedTab = YTKACEPreferenceObject(@"YTKACE.Preference.Downloads.SelectedTab");
-    NSInteger tab = [storedTab respondsToSelector:@selector(integerValue)]
-        ? MAX(0, MIN([storedTab integerValue], 2)) : 0;
+    id storedTab = YTKACEPreferenceObject(@"YTKACE.Preference.Downloads.SelectedSegment");
+    if (![storedTab respondsToSelector:@selector(integerValue)]) {
+        id legacy = YTKACEPreferenceObject(@"YTKACE.Preference.Downloads.SelectedTab");
+        storedTab = [legacy respondsToSelector:@selector(integerValue)] ? @([legacy integerValue] + 1) : @0;
+    }
+    NSInteger tab = MAX(0, MIN([storedTab integerValue], 3));
     self.segmentedControl.selectedSegmentIndex = tab;
     self.layoutMode = YTKACEStoredMode(@"Layout", tab, 3);
     self.sortMode = YTKACEStoredMode(@"Sort", tab, 4);
@@ -408,6 +620,10 @@ static void YTKACEStoreMode(NSString *field, NSInteger segment, NSInteger mode) 
     self.collectionView.alwaysBounceVertical = YES;
     [self.collectionView registerClass:YTKACEDownloadCell.class
              forCellWithReuseIdentifier:@"YTKACEDownloadCell"];
+    [self.collectionView registerClass:YTKACEDownloadJobsHeader.class
+            forSupplementaryViewOfKind:UICollectionElementKindSectionHeader
+                   withReuseIdentifier:@"YTKACEDownloadJobsHeader"];
+    self.jobs = YTKACEDownloadProgressView.sharedView.jobSnapshot;
     self.emptyLabel = [UILabel new];
     self.emptyLabel.text = YTKACELocalized(@"No Downloads");
     self.emptyLabel.textColor = UIColor.secondaryLabelColor;
@@ -452,6 +668,48 @@ static void YTKACEStoreMode(NSString *field, NSInteger segment, NSInteger mode) 
     [NSNotificationCenter.defaultCenter addObserver:self
         selector:@selector(downloadInfoChanged:)
         name:YTKACEDownloadInfoDidChangeNotification object:nil];
+    [NSNotificationCenter.defaultCenter addObserver:self
+        selector:@selector(downloadJobsChanged:)
+        name:YTKACEDownloadJobsDidChangeNotification object:nil];
+}
+
+- (void)downloadJobsChanged:(NSNotification *)notification {
+    (void)notification;
+    NSArray<NSDictionary *> *jobs = YTKACEDownloadProgressView.sharedView.jobSnapshot;
+    NSArray *oldIDs = [self.jobs valueForKey:@"identifier"];
+    NSArray *newIDs = [jobs valueForKey:@"identifier"];
+    self.jobs = jobs;
+    if (![oldIDs isEqualToArray:newIDs]) {
+        self.emptyLabel.hidden = self.files.count != 0 || self.jobs.count != 0;
+        self.collectionView.hidden = self.files.count == 0 && self.jobs.count == 0;
+        [self.collectionView.collectionViewLayout invalidateLayout];
+        [self.collectionView reloadData];
+        return;
+    }
+    for (UICollectionReusableView *view in
+         [self.collectionView visibleSupplementaryViewsOfKind:UICollectionElementKindSectionHeader]) {
+        if ([view isKindOfClass:YTKACEDownloadJobsHeader.class]) [(YTKACEDownloadJobsHeader *)view applyJobs:jobs];
+    }
+}
+
+- (UICollectionReusableView *)collectionView:(UICollectionView *)collectionView
+           viewForSupplementaryElementOfKind:(NSString *)kind
+                                 atIndexPath:(NSIndexPath *)indexPath {
+    YTKACEDownloadJobsHeader *header = [collectionView
+        dequeueReusableSupplementaryViewOfKind:kind
+                           withReuseIdentifier:@"YTKACEDownloadJobsHeader"
+                                  forIndexPath:indexPath];
+    [header applyJobs:self.jobs ?: @[]];
+    return header;
+}
+
+- (CGSize)collectionView:(UICollectionView *)collectionView
+                  layout:(UICollectionViewLayout *)collectionViewLayout
+referenceSizeForHeaderInSection:(NSInteger)section {
+    (void)collectionViewLayout;
+    (void)section;
+    if (self.jobs.count == 0) return CGSizeZero;
+    return CGSizeMake(CGRectGetWidth(collectionView.bounds), 36.0 + 92.0 * self.jobs.count);
 }
 
 - (void)downloadInfoChanged:(NSNotification *)notification {
@@ -461,10 +719,16 @@ static void YTKACEStoreMode(NSString *field, NSInteger segment, NSInteger mode) 
 
 - (void)viewWillAppear:(BOOL)animated {
     [super viewWillAppear:animated];
+    YTKACEDownloadProgressView.sharedView.suppressed = YES;
     YTKACEApplyAppearance(self);
     [self applyTheme];
     [self reloadFiles];
     [self updateMiniPlayer];
+}
+
+- (void)viewWillDisappear:(BOOL)animated {
+    [super viewWillDisappear:animated];
+    YTKACEDownloadProgressView.sharedView.suppressed = NO;
 }
 
 - (void)traitCollectionDidChange:(UITraitCollection *)previousTraitCollection {
@@ -566,7 +830,10 @@ static void YTKACEStoreMode(NSString *field, NSInteger segment, NSInteger mode) 
 
 - (void)downloadLibraryChanged:(NSNotification *)notification {
     (void)notification;
-    [self.metadataCache removeAllObjects];
+    if (!NSThread.isMainThread) {
+        dispatch_async(dispatch_get_main_queue(), ^{ [self reloadFiles]; });
+        return;
+    }
     [self reloadFiles];
 }
 
@@ -589,8 +856,7 @@ static void YTKACEStoreMode(NSString *field, NSInteger segment, NSInteger mode) 
         return;
     }
     self.miniTitleLabel.text = URL.lastPathComponent.stringByDeletingPathExtension;
-    self.miniSubtitleLabel.text = [self.segmentedControl titleForSegmentAtIndex:
-        self.segmentedControl.selectedSegmentIndex];
+    self.miniSubtitleLabel.text = YTKACELocalized(URL.URLByDeletingLastPathComponent.lastPathComponent);
     NSString *symbol = session.player.rate == 0.0f ? @"play.fill" : @"pause.fill";
     [self.miniPlayButton setImage:[UIImage systemImageNamed:symbol]
                          forState:UIControlStateNormal];
@@ -637,27 +903,34 @@ static void YTKACEStoreMode(NSString *field, NSInteger segment, NSInteger mode) 
                        animated:YES completion:nil];
 }
 
-- (NSURL *)selectedDirectory {
+- (NSArray<NSURL *> *)selectedDirectories {
     NSArray<NSString *> *names = @[@"Video", @"Audio", @"Shorts"];
-    NSInteger index = MAX(0, MIN(self.segmentedControl.selectedSegmentIndex, 2));
+    NSInteger segment = MAX(0, MIN(self.segmentedControl.selectedSegmentIndex, 3));
     NSURL *downloads = [YTKACEApplicationSupportDirectory()
         URLByAppendingPathComponent:@"Downloads" isDirectory:YES];
-    NSURL *directory = [downloads URLByAppendingPathComponent:names[(NSUInteger)index]
-                                                  isDirectory:YES];
-    [NSFileManager.defaultManager createDirectoryAtURL:directory
-                           withIntermediateDirectories:YES
-                                            attributes:nil error:nil];
-    return directory;
+    NSMutableArray<NSURL *> *directories = [NSMutableArray array];
+    for (NSUInteger index = 0; index < names.count; index++) {
+        if (segment != 0 && (NSInteger)index != segment - 1) continue;
+        NSURL *directory = [downloads URLByAppendingPathComponent:names[index] isDirectory:YES];
+        [NSFileManager.defaultManager createDirectoryAtURL:directory
+                               withIntermediateDirectories:YES
+                                                attributes:nil error:nil];
+        [directories addObject:directory];
+    }
+    return directories;
 }
 
 - (void)reloadFiles {
-    NSArray<NSURL *> *contents =
-        [NSFileManager.defaultManager contentsOfDirectoryAtURL:self.selectedDirectory
-                                   includingPropertiesForKeys:@[
-                                       NSURLContentModificationDateKey,
-                                       NSURLFileSizeKey,
-                                       NSURLIsRegularFileKey
-                                   ] options:NSDirectoryEnumerationSkipsHiddenFiles error:nil] ?: @[];
+    NSMutableArray<NSURL *> *contents = [NSMutableArray array];
+    for (NSURL *directory in self.selectedDirectories) {
+        [contents addObjectsFromArray:
+            [NSFileManager.defaultManager contentsOfDirectoryAtURL:directory
+                                       includingPropertiesForKeys:@[
+                                           NSURLContentModificationDateKey,
+                                           NSURLFileSizeKey,
+                                           NSURLIsRegularFileKey
+                                       ] options:NSDirectoryEnumerationSkipsHiddenFiles error:nil] ?: @[]];
+    }
     NSPredicate *regular = [NSPredicate predicateWithBlock:
         ^BOOL(NSURL *url, NSDictionary<NSString *, id> *bindings) {
             (void)bindings;
@@ -689,14 +962,14 @@ static void YTKACEStoreMode(NSString *field, NSInteger segment, NSInteger mode) 
                 compare:rightDate ?: NSDate.distantPast];
             return self.sortMode == 1 ? result : (NSComparisonResult)(-result);
         }];
-    self.emptyLabel.hidden = self.files.count != 0;
-    self.collectionView.hidden = self.files.count == 0;
+    self.emptyLabel.hidden = self.files.count != 0 || self.jobs.count != 0;
+    self.collectionView.hidden = self.files.count == 0 && self.jobs.count == 0;
     [self.collectionView reloadData];
 }
 
 - (void)segmentChanged {
     NSInteger tab = self.segmentedControl.selectedSegmentIndex;
-    YTKACESetPreferenceObject(@"YTKACE.Preference.Downloads.SelectedTab", @(tab));
+    YTKACESetPreferenceObject(@"YTKACE.Preference.Downloads.SelectedSegment", @(tab));
     self.layoutMode = YTKACEStoredMode(@"Layout", tab, 3);
     self.sortMode = YTKACEStoredMode(@"Sort", tab, 4);
     [self applyLayoutButtonImage];
@@ -888,12 +1161,15 @@ static void YTKACEStoreMode(NSString *field, NSInteger segment, NSInteger mode) 
     (void)indexPath;
     CGFloat width = CGRectGetWidth(collectionView.bounds);
     if (self.layoutMode == 0) {
-        return CGSizeMake(width, 286.0);
+        CGFloat cardWidth = MIN(720.0, width - 24.0);
+        return CGSizeMake(width, round(cardWidth * 9.0 / 16.0) + 86.0);
     }
     if (self.layoutMode == 1) {
         return CGSizeMake(width, 92.0);
     }
-    return CGSizeMake(floor((width - 18.0) * 0.5), 184.0);
+    NSInteger columns = width >= 700.0 ? 3 : 2;
+    CGFloat itemWidth = floor((width - 12.0 - 6.0 * (columns - 1)) / columns);
+    return CGSizeMake(itemWidth, round((itemWidth - 6.0) * 9.0 / 16.0) + 70.0);
 }
 
 - (UIEdgeInsets)collectionView:(UICollectionView *)collectionView
@@ -930,10 +1206,12 @@ minimumInteritemSpacingForSectionAtIndex:(NSInteger)section {
     cell.nameLabel.text = url.lastPathComponent.stringByDeletingPathExtension;
     cell.metadataLabel.text = [NSByteCountFormatter stringFromByteCount:size.longLongValue
                                                               countStyle:NSByteCountFormatterCountStyleFile];
-    cell.thumbnailView.image = nil;
-    cell.placeholderView.hidden = NO;
-    cell.resolutionLabel.text = YTKACELocalized(@"Video");
-    cell.durationLabel.text = YTKACELocalized(@"--:--");
+    if (![cell.representedPath isEqualToString:url.path] || [self.metadataCache objectForKey:url.path] == nil) {
+        cell.thumbnailView.image = nil;
+        cell.placeholderView.hidden = NO;
+        cell.resolutionLabel.text = YTKACELocalized(@"Video");
+        cell.durationLabel.text = YTKACELocalized(@"--:--");
+    }
     [cell applyTheme];
     BOOL hasLongPress = NO;
     for (UIGestureRecognizer *recognizer in cell.gestureRecognizers) {
@@ -954,26 +1232,61 @@ minimumInteritemSpacingForSectionAtIndex:(NSInteger)section {
     return cell;
 }
 
+static UIImage *YTKACEDecodedThumbnail(CGImageSourceRef source) {
+    if (source == NULL) return nil;
+    NSDictionary *options = @{
+        (id)kCGImageSourceCreateThumbnailFromImageAlways: @YES,
+        (id)kCGImageSourceCreateThumbnailWithTransform: @YES,
+        (id)kCGImageSourceShouldCacheImmediately: @YES,
+        (id)kCGImageSourceThumbnailMaxPixelSize: @1280
+    };
+    CGImageRef image = CGImageSourceCreateThumbnailAtIndex(source, 0, (__bridge CFDictionaryRef)options);
+    if (image == NULL) return nil;
+    UIImage *result = [UIImage imageWithCGImage:image];
+    CGImageRelease(image);
+    return result;
+}
+
 - (void)loadMetadataForURL:(NSURL *)url
                        cell:(YTKACEDownloadCell *)cell
                        size:(long long)size {
-    NSDictionary *cached = [self.metadataCache objectForKey:url.path];
-    if (cached != nil) {
-        [self applyMetadata:cached toCell:cell path:url.path size:size];
+    NSString *path = url.path;
+    NSDictionary *cached = [self.metadataCache objectForKey:path];
+    if (cached != nil && ![cached[@"artwork"] boolValue]) {
+        NSURL *base = url.URLByDeletingPathExtension;
+        for (NSString *extension in @[@"jpg", @"png"]) {
+            if ([NSFileManager.defaultManager fileExistsAtPath:[base URLByAppendingPathExtension:extension].path]) {
+                [self.metadataCache removeObjectForKey:path];
+                cached = nil;
+                break;
+            }
+        }
+    }
+    if (cached != nil && [cached[@"size"] longLongValue] == size) {
+        [self applyMetadata:cached toCell:cell path:path size:size];
         return;
     }
-    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+    if ([self.metadataLoading containsObject:path]) return;
+    [self.metadataLoading addObject:path];
+    __weak YTKACEDownloadsController *weakSelf = self;
+    [self.metadataQueue addOperationWithBlock:^{
         AVURLAsset *asset = [AVURLAsset URLAssetWithURL:url options:nil];
         NSTimeInterval duration = CMTimeGetSeconds(asset.duration);
         AVAssetTrack *track = [asset tracksWithMediaType:AVMediaTypeVideo].firstObject;
         CGSize dimensions = track == nil ? CGSizeZero
             : CGSizeApplyAffineTransform(track.naturalSize, track.preferredTransform);
-        UIImage *thumbnail = YTKACEMediaArtworkImage(url);
+        UIImage *thumbnail = nil;
+        NSData *artwork = YTKACEMediaArtworkData(url);
+        if (artwork.length != 0) {
+            CGImageSourceRef source = CGImageSourceCreateWithData((__bridge CFDataRef)artwork, NULL);
+            thumbnail = YTKACEDecodedThumbnail(source);
+            if (source != NULL) CFRelease(source);
+        }
         if (thumbnail == nil && track != nil) {
             AVAssetImageGenerator *generator =
                 [AVAssetImageGenerator assetImageGeneratorWithAsset:asset];
             generator.appliesPreferredTrackTransform = YES;
-            generator.maximumSize = CGSizeMake(1040.0, 588.0);
+            generator.maximumSize = CGSizeMake(1280.0, 720.0);
             CGImageRef image = [generator copyCGImageAtTime:
                 CMTimeMakeWithSeconds(duration > 2.0 ? 1.0 : 0.0, 600)
                                                     actualTime:NULL error:nil];
@@ -985,13 +1298,36 @@ minimumInteritemSpacingForSectionAtIndex:(NSInteger)section {
         NSDictionary *metadata = @{
             @"duration": YTKACEDurationText(duration),
             @"resolution": YTKACEResolutionText(dimensions),
-            @"image": thumbnail ?: NSNull.null
+            @"image": thumbnail ?: NSNull.null,
+            @"artwork": @(artwork.length != 0),
+            @"size": @(size)
         };
-        [self.metadataCache setObject:metadata forKey:url.path];
         dispatch_async(dispatch_get_main_queue(), ^{
-            [self applyMetadata:metadata toCell:cell path:url.path size:size];
+            YTKACEDownloadsController *strongSelf = weakSelf;
+            if (strongSelf == nil) return;
+            [strongSelf.metadataLoading removeObject:path];
+            NSNumber *current = nil;
+            NSURL *fresh = [NSURL fileURLWithPath:path];
+            [fresh getResourceValue:&current forKey:NSURLFileSizeKey error:nil];
+            if (current != nil && current.longLongValue != size) {
+                for (YTKACEDownloadCell *visible in strongSelf.collectionView.visibleCells) {
+                    if ([visible isKindOfClass:YTKACEDownloadCell.class] &&
+                        [visible.representedPath isEqualToString:path]) {
+                        [strongSelf loadMetadataForURL:fresh cell:visible size:current.longLongValue];
+                        break;
+                    }
+                }
+                return;
+            }
+            [strongSelf.metadataCache setObject:metadata forKey:path];
+            for (YTKACEDownloadCell *visible in strongSelf.collectionView.visibleCells) {
+                if ([visible isKindOfClass:YTKACEDownloadCell.class] &&
+                    [visible.representedPath isEqualToString:path]) {
+                    [strongSelf applyMetadata:metadata toCell:visible path:path size:size];
+                }
+            }
         });
-    });
+    }];
 }
 
 - (void)applyMetadata:(NSDictionary *)metadata
@@ -1009,9 +1345,7 @@ minimumInteritemSpacingForSectionAtIndex:(NSInteger)section {
     cell.resolutionLabel.text = resolution.length != 0 ? resolution : YTKACELocalized(@"Audio");
     NSString *sizeText = [NSByteCountFormatter stringFromByteCount:size
                                                         countStyle:NSByteCountFormatterCountStyleFile];
-    NSString *details = cell.layoutMode == 2
-        ? sizeText
-        : [NSString stringWithFormat:@"%@  |  %@", sizeText, duration];
+    NSString *details = sizeText;
     NSString *channel = YTKACEStoredChannelName([NSURL fileURLWithPath:path]);
     cell.metadataLabel.text = channel.length != 0
         ? [NSString stringWithFormat:@"%@  ·  %@", channel, details] : details;
@@ -1084,8 +1418,20 @@ didSelectItemAtIndexPath:(NSIndexPath *)indexPath {
     UIImpactFeedbackGenerator *feedback =
         [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleMedium];
     [feedback impactOccurred];
-    [self showItemMenuForURL:self.files[(NSUInteger)indexPath.item]
-                  sourceView:cell];
+    NSURL *url = self.files[(NSUInteger)indexPath.item];
+    [UIView animateWithDuration:0.14 delay:0.0
+                        options:UIViewAnimationOptionBeginFromCurrentState
+                     animations:^{
+        cell.cardView.transform = CGAffineTransformMakeScale(0.94, 0.94);
+        cell.cardView.alpha = 0.75;
+    } completion:^(__unused BOOL finished) {
+        [UIView animateWithDuration:0.3 delay:0.0 usingSpringWithDamping:0.6 initialSpringVelocity:0.0
+                            options:UIViewAnimationOptionBeginFromCurrentState animations:^{
+            cell.cardView.transform = CGAffineTransformIdentity;
+            cell.cardView.alpha = 1.0;
+        } completion:nil];
+        [self showItemMenuForURL:url sourceView:cell];
+    }];
 }
 
 - (id)nativeActionWithTitle:(NSString *)title

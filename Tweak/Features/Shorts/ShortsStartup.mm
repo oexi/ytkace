@@ -18,8 +18,18 @@ static IMP OriginalResumeToShorts;
 static IMP OriginalShortsTargeted;
 static IMP OriginalLaunchToShorts;
 
+static BOOL YTKACEStartupTabIsOther(void) {
+    id stored = [NSUserDefaults.standardUserDefaults objectForKey:@"YTKACE.Preference.Tabs.Startup"];
+    if ([stored isKindOfClass:NSString.class]) {
+        NSString *token = stored;
+        return token.length != 0 && ![token isEqualToString:@"shorts"];
+    }
+    NSInteger index = [stored respondsToSelector:@selector(integerValue)] ? [stored integerValue] : 0;
+    return index > 0 && index != 3;
+}
+
 static BOOL YTKACEPreventShortsOpen(void) {
-    return YTKACEFeatureEnabled(YTKACEPreventShortsOpenKey);
+    return YTKACEFeatureEnabled(YTKACEPreventShortsOpenKey) || YTKACEStartupTabIsOther();
 }
 
 static BOOL YTKACEEligibilityModern(id receiver,

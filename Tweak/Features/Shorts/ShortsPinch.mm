@@ -1,6 +1,7 @@
 #import "../../YTKACE.h"
 #import "../../Runtime/Hooking.h"
 #import "../../Runtime/Preferences.h"
+#import "../Downloads/DownloadLog.h"
 
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
@@ -152,7 +153,36 @@ static void YTKACEReelWillDisappear(id receiver, SEL selector, BOOL animated) {
     }
 }
 
+static IMP OriginalShowPivotBar;
+
+static void YTKACEShowPivotBar(id receiver, SEL selector) {
+    if (YTKACEShortsPivotShowBlocked()) {
+        UIWindow *window = [receiver respondsToSelector:@selector(view)] ? [(UIViewController *)receiver view].window : nil;
+        if (YTKACEShortsContainerForView(window, window) != nil) {
+            return;
+        }
+        YTKACESetShortsNewFullscreen(nil, NO);
+        return;
+    }
+    if (OriginalShowPivotBar != NULL) ((void (*)(id, SEL))OriginalShowPivotBar)(receiver, selector);
+}
+
+static IMP OriginalReelRootWillDisappear;
+
+static void YTKACEReelRootWillDisappear(id receiver, SEL selector, BOOL animated) {
+    if (YTKACEShortsNewFullscreenActive()) {
+        YTKACESetShortsNewFullscreen(nil, NO);
+    }
+    if (OriginalReelRootWillDisappear != NULL) {
+        ((void (*)(id, SEL, BOOL))OriginalReelRootWillDisappear)(receiver, selector, animated);
+    }
+}
+
 void YTKACEInstallShortsPinchHooks(void) {
+    YTKACEInstallInstanceHook(@"YTAppViewController", @"showPivotBar",
+                              (IMP)YTKACEShowPivotBar, &OriginalShowPivotBar);
+    YTKACEInstallInstanceHook(@"YTReelWatchRootViewController", @"viewWillDisappear:",
+                              (IMP)YTKACEReelRootWillDisappear, &OriginalReelRootWillDisappear);
     YTKACEInstallInstanceHook(@"YTPlayerView", @"didPinch:",
                               (IMP)YTKACEDidPinch, &OriginalDidPinch);
     YTKACEInstallInstanceHook(@"YTReelPlayerViewController",

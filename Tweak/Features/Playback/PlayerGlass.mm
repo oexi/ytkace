@@ -7,6 +7,7 @@
 #import <objc/runtime.h>
 
 static IMP OriginalFrostedLayout;
+static IMP OriginalFrostedMoveToWindow;
 static const void *YTKACEPlayerGlassAssociation = &YTKACEPlayerGlassAssociation;
 
 static BOOL YTKACEInPlayerControls(UIView *view) {
@@ -29,11 +30,10 @@ static NSArray<UIView *> *YTKACEFrostedLayers(UIView *frosted) {
     return views;
 }
 
-static void YTKACEFrostedLayout(UIView *receiver, SEL selector) {
-    if (OriginalFrostedLayout != NULL) ((void (*)(id, SEL))OriginalFrostedLayout)(receiver, selector);
+static void YTKACEApplyFrostedGlass(UIView *receiver) {
     UIVisualEffectView *glass = objc_getAssociatedObject(receiver, YTKACEPlayerGlassAssociation);
-    BOOL wanted = YTKACELiquidGlassAvailable() && YTKACEFeatureEnabled(@"YTKACE.Preference.Glass.Player") &&
-        YTKACEInPlayerControls(receiver);
+    BOOL enabled = YTKACELiquidGlassAvailable() && YTKACEFeatureEnabled(@"YTKACE.Preference.Glass.Player");
+    BOOL wanted = enabled && YTKACEInPlayerControls(receiver);
     if (!wanted) {
         if (glass != nil) {
             [glass removeFromSuperview];
@@ -45,7 +45,7 @@ static void YTKACEFrostedLayout(UIView *receiver, SEL selector) {
         Class effectClass = NSClassFromString(@"UIGlassEffect");
         SEL styleSelector = NSSelectorFromString(@"effectWithStyle:");
         UIVisualEffect *effect = [effectClass respondsToSelector:styleSelector]
-            ? ((id (*)(id, SEL, NSInteger))objc_msgSend)(effectClass, styleSelector, 1)
+            ? ((id (*)(id, SEL, NSInteger))objc_msgSend)(effectClass, styleSelector, 0)
             : [effectClass new];
         if (effect == nil) return;
         glass = [[UIVisualEffectView alloc] initWithEffect:effect];
@@ -63,8 +63,20 @@ static void YTKACEFrostedLayout(UIView *receiver, SEL selector) {
     receiver.backgroundColor = UIColor.clearColor;
 }
 
+static void YTKACEFrostedLayout(UIView *receiver, SEL selector) {
+    if (OriginalFrostedLayout != NULL) ((void (*)(id, SEL))OriginalFrostedLayout)(receiver, selector);
+    YTKACEApplyFrostedGlass(receiver);
+}
+
+static void YTKACEFrostedMoveToWindow(UIView *receiver, SEL selector) {
+    if (OriginalFrostedMoveToWindow != NULL) ((void (*)(id, SEL))OriginalFrostedMoveToWindow)(receiver, selector);
+    if (receiver.window != nil) [receiver setNeedsLayout];
+}
+
 __attribute__((constructor)) static void YTKACEInstallPlayerGlass(void) {
     if (!YTKACELiquidGlassAvailable()) return;
     YTKACEInstallInstanceHook(@"YTFrostedGlassView", @"layoutSubviews",
                               (IMP)YTKACEFrostedLayout, &OriginalFrostedLayout);
+    YTKACEInstallInstanceHook(@"YTFrostedGlassView", @"didMoveToWindow",
+                              (IMP)YTKACEFrostedMoveToWindow, &OriginalFrostedMoveToWindow);
 }

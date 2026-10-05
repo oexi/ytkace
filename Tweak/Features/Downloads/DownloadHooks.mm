@@ -42,6 +42,7 @@ static NSMutableDictionary<NSString *, NSArray *> *YTKACEPlayerRequests;
 static NSMutableDictionary<NSString *, id> *YTKACEPlaybackRequests;
 static NSInteger YTKACEPlayerHookAttempts;
 static NSString *YTKACELastCapturedVideoID;
+id YTKACELatestPlayerAuthorization;
 
 NSString *YTKACELastVideoID(void) {
     return [YTKACELastCapturedVideoID copy];
@@ -121,6 +122,7 @@ static void YTKACECaptureOnesieSession(id factory,
     state.factory = factory;
     state.playerRequest = YTKACECopyObject(playerRequest);
     state.authorization = YTKACECopyObject(authorization);
+    if (authorization != nil) YTKACELatestPlayerAuthorization = authorization;
     state.dataLoader = dataLoader;
     state.context = context;
     state.cryptor = cryptor;

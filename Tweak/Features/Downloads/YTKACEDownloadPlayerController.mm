@@ -139,17 +139,23 @@ static NSArray<YTKACESubtitleCue *> *YTKACEReadSubtitles(NSURL *mediaURL) {
 @property(nonatomic, copy, readwrite) NSArray<NSDictionary<NSString *, id> *> *sponsorSegments;
 @property(nonatomic, copy, readwrite, nullable) NSDictionary<NSString *, id> *promptedSegment;
 @property(nonatomic, strong) NSMutableSet<NSNumber *> *handledSegments;
+@property(nonatomic, strong, nullable) NSArray *remoteTargets;
 @end
 
 @implementation YTKACEDownloadPlaybackSession
 
+static YTKACEDownloadPlaybackSession *YTKACESharedPlaybackSession;
+
 + (instancetype)sharedSession {
-    static YTKACEDownloadPlaybackSession *session;
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
-        session = [YTKACEDownloadPlaybackSession new];
+        YTKACESharedPlaybackSession = [YTKACEDownloadPlaybackSession new];
     });
-    return session;
+    return YTKACESharedPlaybackSession;
+}
+
++ (instancetype)existingSession {
+    return YTKACESharedPlaybackSession;
 }
 
 - (instancetype)init {
@@ -173,8 +179,6 @@ static NSArray<YTKACESubtitleCue *> *YTKACEReadSubtitles(NSURL *mediaURL) {
         self.player.audiovisualBackgroundPlaybackPolicy =
             AVPlayerAudiovisualBackgroundPlaybackPolicyContinuesIfPossible;
     }
-    [self configureAudioSession];
-    [self configureRemoteCommands];
     [NSNotificationCenter.defaultCenter addObserver:self
         selector:@selector(itemDidEnd:)
         name:AVPlayerItemDidPlayToEndTimeNotification object:nil];
@@ -418,37 +422,38 @@ static void YTKACEStoreCompleted(NSURL *URL, NSTimeInterval duration,
 }
 
 - (void)configureRemoteCommands {
+    if (self.remoteTargets != nil) return;
     [UIApplication.sharedApplication beginReceivingRemoteControlEvents];
     MPRemoteCommandCenter *commands = MPRemoteCommandCenter.sharedCommandCenter;
     __weak YTKACEDownloadPlaybackSession *weakSelf = self;
-    [commands.playCommand addTargetWithHandler:^MPRemoteCommandHandlerStatus(MPRemoteCommandEvent *event) {
-        (void)event;
-        [weakSelf play];
-        return MPRemoteCommandHandlerStatusSuccess;
-    }];
-    [commands.pauseCommand addTargetWithHandler:^MPRemoteCommandHandlerStatus(MPRemoteCommandEvent *event) {
-        (void)event;
-        [weakSelf pause];
-        return MPRemoteCommandHandlerStatusSuccess;
-    }];
-    [commands.togglePlayPauseCommand addTargetWithHandler:
-        ^MPRemoteCommandHandlerStatus(MPRemoteCommandEvent *event) {
-            (void)event;
-            [weakSelf togglePlayback];
+    NSMutableArray *targets = [NSMutableArray array];
+    void (^add)(MPRemoteCommand *, void (^)(YTKACEDownloadPlaybackSession *)) =
+        ^(MPRemoteCommand *command, void (^action)(YTKACEDownloadPlaybackSession *)) {
+        id target = [command addTargetWithHandler:^MPRemoteCommandHandlerStatus(__unused MPRemoteCommandEvent *event) {
+            YTKACEDownloadPlaybackSession *strongSelf = weakSelf;
+            if (strongSelf == nil || strongSelf.currentURL == nil) {
+                return MPRemoteCommandHandlerStatusNoActionableNowPlayingItem;
+            }
+            action(strongSelf);
             return MPRemoteCommandHandlerStatusSuccess;
         }];
-    [commands.nextTrackCommand addTargetWithHandler:
-        ^MPRemoteCommandHandlerStatus(MPRemoteCommandEvent *event) {
-            (void)event;
-            [weakSelf playNext];
-            return MPRemoteCommandHandlerStatusSuccess;
-        }];
-    [commands.previousTrackCommand addTargetWithHandler:
-        ^MPRemoteCommandHandlerStatus(MPRemoteCommandEvent *event) {
-            (void)event;
-            [weakSelf playPrevious];
-            return MPRemoteCommandHandlerStatusSuccess;
-        }];
+        [targets addObject:@[command, target]];
+    };
+    add(commands.playCommand, ^(YTKACEDownloadPlaybackSession *session) { [session play]; });
+    add(commands.pauseCommand, ^(YTKACEDownloadPlaybackSession *session) { [session pause]; });
+    add(commands.togglePlayPauseCommand, ^(YTKACEDownloadPlaybackSession *session) { [session togglePlayback]; });
+    add(commands.nextTrackCommand, ^(YTKACEDownloadPlaybackSession *session) { [session playNext]; });
+    add(commands.previousTrackCommand, ^(YTKACEDownloadPlaybackSession *session) { [session playPrevious]; });
+    self.remoteTargets = targets;
+    YTKACEDownloadLog(@"library", @"remote commands attached");
+}
+
+- (void)releaseRemoteCommands {
+    if (self.remoteTargets == nil) return;
+    for (NSArray *pair in self.remoteTargets) [(MPRemoteCommand *)pair[0] removeTarget:pair[1]];
+    self.remoteTargets = nil;
+    MPNowPlayingInfoCenter.defaultCenter.nowPlayingInfo = nil;
+    YTKACEDownloadLog(@"library", @"remote commands released");
 }
 
 - (void)applicationWillResignActive:(NSNotification *)notification {
@@ -614,6 +619,7 @@ static void YTKACEStoreCompleted(NSURL *URL, NSTimeInterval duration,
 - (void)play {
     YTKACEPauseYouTubePlayer();
     [self configureAudioSession];
+    [self configureRemoteCommands];
     [self beginTrackingPosition];
     [self.player play];
     self.player.rate = MAX(0.25f, MIN(self.playbackRate, 5.0f));
@@ -695,6 +701,7 @@ static void YTKACEStoreCompleted(NSURL *URL, NSTimeInterval duration,
     [self setPrompt:nil];
     self.currentIndex = NSNotFound;
     [[YTKACELibraryPiP sharedPiP] stop];
+    [self releaseRemoteCommands];
     [NSNotificationCenter.defaultCenter
         postNotificationName:YTKACEDownloadPlaybackDidStopNotification object:self];
 }
@@ -729,10 +736,7 @@ static void YTKACEStoreCompleted(NSURL *URL, NSTimeInterval duration,
 }
 
 - (void)updateNowPlayingInfo {
-    if (self.currentURL == nil) {
-        MPNowPlayingInfoCenter.defaultCenter.nowPlayingInfo = nil;
-        return;
-    }
+    if (self.currentURL == nil) return;
     NSMutableDictionary *info = [NSMutableDictionary dictionary];
     info[MPMediaItemPropertyTitle] =
         self.currentURL.lastPathComponent.stringByDeletingPathExtension ?: @"YTKACE";

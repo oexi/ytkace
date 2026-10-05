@@ -87,6 +87,110 @@ void YTKACESetShortsOverlayFullscreen(UIView *overlay,
     }
 }
 
+static void YTKACECollectShortsElements(UIView *view, NSMutableArray<UIView *> *found, NSUInteger depth) {
+    if (view == nil || depth > 12) return;
+    NSString *name = NSStringFromClass(view.class);
+    if ([name isEqualToString:@"YTReelElementAsyncComponentView"] ||
+        [name isEqualToString:@"YTReelGradientView"] ||
+        [name hasPrefix:@"YTShortsStickersView"]) {
+        [found addObject:view];
+        return;
+    }
+    for (UIView *subview in view.subviews) YTKACECollectShortsElements(subview, found, depth + 1);
+}
+
+void YTKACESetShortsElementsFullscreen(UIView *container, BOOL fullscreen) {
+    NSMutableArray<UIView *> *elements = [NSMutableArray array];
+    YTKACECollectShortsElements(container, elements, 0);
+    for (UIView *element in elements) {
+        if (YTKACEContainsShortsDownloadButton(element)) continue;
+        if (fullscreen) {
+            if (objc_getAssociatedObject(element, YTKACEShortsFullscreenAlphaKey) == nil) {
+                objc_setAssociatedObject(element, YTKACEShortsFullscreenAlphaKey, @(element.alpha),
+                                         OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+            }
+            element.alpha = 0.0;
+        } else {
+            NSNumber *alpha = objc_getAssociatedObject(element, YTKACEShortsFullscreenAlphaKey);
+            element.alpha = alpha != nil ? alpha.doubleValue : 1.0;
+            objc_setAssociatedObject(element, YTKACEShortsFullscreenAlphaKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        }
+    }
+}
+
+UIView *YTKACEShortsContainerForView(UIView *view, UIView *fallbackRoot) {
+    Class containerClass = NSClassFromString(@"YTReelContainerView");
+    if (containerClass == Nil) return nil;
+    for (UIView *candidate = view; candidate != nil; candidate = candidate.superview) {
+        if ([candidate isKindOfClass:containerClass]) return candidate;
+    }
+    NSMutableArray<UIView *> *stack = [NSMutableArray arrayWithObject:fallbackRoot ?: [UIView new]];
+    while (stack.count != 0) {
+        UIView *candidate = stack.lastObject;
+        [stack removeLastObject];
+        if ([candidate isKindOfClass:containerClass] && candidate.window != nil &&
+            CGRectIntersectsRect([candidate convertRect:candidate.bounds toView:nil], candidate.window.bounds)) {
+            return candidate;
+        }
+        [stack addObjectsFromArray:candidate.subviews];
+    }
+    return nil;
+}
+
+static BOOL YTKACEShortsGlobalFullscreen;
+static NSHashTable<UIView *> *YTKACEFadedShortsContainers;
+static BOOL YTKACEShortsPivotBypass;
+
+BOOL YTKACEShortsPivotShowBlocked(void) {
+    return YTKACEShortsGlobalFullscreen && !YTKACEShortsPivotBypass;
+}
+
+BOOL YTKACEShortsNewFullscreenActive(void) {
+    return YTKACEShortsGlobalFullscreen;
+}
+
+void YTKACEFadeShortsElement(UIView *element) {
+    if (element == nil || element.alpha <= 0.01 || YTKACEContainsShortsDownloadButton(element)) return;
+    if (objc_getAssociatedObject(element, YTKACEShortsFullscreenAlphaKey) == nil) {
+        objc_setAssociatedObject(element, YTKACEShortsFullscreenAlphaKey, @(element.alpha),
+                                 OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+    element.alpha = 0.0;
+}
+
+void YTKACERegisterFadedShortsContainer(UIView *container) {
+    if (container == nil) return;
+    if (YTKACEFadedShortsContainers == nil) YTKACEFadedShortsContainers = [NSHashTable weakObjectsHashTable];
+    [YTKACEFadedShortsContainers addObject:container];
+}
+
+void YTKACESetShortsNewFullscreen(UIView *container, BOOL fullscreen) {
+    YTKACEShortsGlobalFullscreen = fullscreen;
+    SEL pivotSelector = NSSelectorFromString(fullscreen ? @"hidePivotBar" : @"showPivotBar");
+    YTKACEShortsPivotBypass = YES;
+    for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
+        if (![scene isKindOfClass:UIWindowScene.class]) continue;
+        for (UIWindow *window in ((UIWindowScene *)scene).windows) {
+            id root = window.rootViewController;
+            if ([root respondsToSelector:pivotSelector]) ((void (*)(id, SEL))objc_msgSend)(root, pivotSelector);
+        }
+    }
+    YTKACEShortsPivotBypass = NO;
+    if (fullscreen) {
+        if (container == nil) return;
+        YTKACERegisterFadedShortsContainer(container);
+        [UIView animateWithDuration:0.25 animations:^{
+            YTKACESetShortsElementsFullscreen(container, YES);
+        }];
+        return;
+    }
+    NSArray<UIView *> *faded = YTKACEFadedShortsContainers.allObjects;
+    [YTKACEFadedShortsContainers removeAllObjects];
+    [UIView animateWithDuration:0.25 animations:^{
+        for (UIView *view in faded) YTKACESetShortsElementsFullscreen(view, NO);
+    }];
+}
+
 @implementation YTKACEDownloadJob
 @end
 
@@ -94,6 +198,7 @@ void YTKACESetShortsOverlayFullscreen(UIView *overlay,
 @property(nonatomic, strong) NSURLSession *session;
 @property(nonatomic, strong) NSMutableDictionary<NSNumber *, YTKACEDownloadJob *> *jobs;
 @property(nonatomic, strong) NSMutableDictionary<NSString *, YTKACEDownloadJob *> *activeJobs;
+@property(nonatomic, strong) NSMutableDictionary<NSString *, YTKACEDownloadJob *> *retryableJobs;
 @property(nonatomic, weak) UIView *downloadSourceView;
 @property(nonatomic, strong, nullable) id externalResponse;
 @property(nonatomic, weak) UIView *externalSourceView;
@@ -114,6 +219,8 @@ void YTKACESetShortsOverlayFullscreen(UIView *overlay,
                      audioOnly:(BOOL)audioOnly
                       category:(NSString *)category;
 - (void)presentShareSheetForURL:(NSURL *)url;
+- (void)launchJob:(YTKACEDownloadJob *)job;
+- (void)retryJobWithIdentifier:(NSString *)identifier;
 - (void)resolveAudioDestinationFromView:(nullable UIView *)sourceView
                                    then:(dispatch_block_t)continuation;
 - (void)mergeVideoURL:(NSURL *)videoURL audioURL:(NSURL *)audioURL
@@ -218,6 +325,9 @@ void YTKACESaveVideoToPhotosFile(NSURL *url,
                                                  delegate:self
                                             delegateQueue:queue];
         __weak YTKACEDownloadCoordinator *weakSelf = self;
+        YTKACEDownloadProgressView.sharedView.retryHandler = ^(NSString *identifier) {
+            [weakSelf retryJobWithIdentifier:identifier];
+        };
         YTKACEDownloadProgressView.sharedView.cancelHandler = ^(NSString *identifier) {
             YTKACEDownloadJob *job = weakSelf.activeJobs[identifier];
             if (job != nil && job.sabrTask == nil && job.task == nil && job.directTask == nil) {
@@ -906,6 +1016,12 @@ void YTKACESaveVideoToPhotosFile(NSURL *url,
 
 - (void)toggleShortsFullscreenFromView:(UIView *)sourceView {
     UIViewController *controller = [self shortsControllerFromView:sourceView];
+    if (controller == nil) {
+        UIView *container = YTKACEShortsContainerForView(sourceView, sourceView.window);
+        if (container == nil) return;
+        YTKACESetShortsNewFullscreen(container, !YTKACEShortsGlobalFullscreen);
+        return;
+    }
     if (controller != nil) {
             BOOL fullscreen = [objc_getAssociatedObject(
                 controller, YTKACEShortsFullscreenKey) boolValue];
@@ -919,10 +1035,14 @@ void YTKACESaveVideoToPhotosFile(NSURL *url,
             SEL overlaySelector = NSSelectorFromString(@"playbackOverlay");
             id overlay = [shortsView respondsToSelector:overlaySelector]
                 ? ((id (*)(id, SEL))objc_msgSend)(shortsView, overlaySelector) : nil;
+            UIView *container = [overlay isKindOfClass:UIView.class]
+                ? nil : YTKACEShortsContainerForView(sourceView, controller.view);
             [UIView animateWithDuration:0.3 animations:^{
                 if ([overlay isKindOfClass:UIView.class]) {
                     YTKACESetShortsOverlayFullscreen(
                         (UIView *)overlay, !fullscreen);
+                } else if (container != nil) {
+                    YTKACESetShortsElementsFullscreen(container, !fullscreen);
                 }
             }];
             objc_setAssociatedObject(controller, YTKACEShortsFullscreenKey, @(!fullscreen),
@@ -951,8 +1071,9 @@ void YTKACESaveVideoToPhotosFile(NSURL *url,
     UIImage *chevron = [self menuIcon:@"chevron.right"];
     BOOL autoSkip = YTKACEFeatureEnabled(@"autoSkipShorts");
     UIViewController *shortsController = [self shortsControllerFromView:sourceView];
-    BOOL fullscreen = [objc_getAssociatedObject(
-        shortsController, YTKACEShortsFullscreenKey) boolValue];
+    BOOL fullscreen = shortsController != nil
+        ? [objc_getAssociatedObject(shortsController, YTKACEShortsFullscreenKey) boolValue]
+        : YTKACEShortsGlobalFullscreen;
     NSString *fullscreenTitle = fullscreen ? YTKACELocalized(@"Exit Fullscreen") : YTKACELocalized(@"Fullscreen");
     NSString *fullscreenIcon = fullscreen
         ? @"arrow.down.right.and.arrow.up.left"
@@ -1350,6 +1471,15 @@ void YTKACESaveVideoToPhotosFile(NSURL *url,
     YTKACEDownloadLog(job.identifier, @"destination photos=%d share=%d",
         job.savesToPhotos, job.sharesFile);
     [self chooseCaptionsForJob:job then:^{
+        [self launchJob:job];
+    }];
+}
+
+- (void)launchJob:(YTKACEDownloadJob *)job {
+    {
+        if (self.retryableJobs == nil) self.retryableJobs = [NSMutableDictionary dictionary];
+        if (self.retryableJobs.count >= 24) [self.retryableJobs removeAllObjects];
+        self.retryableJobs[job.identifier] = job;
         self.activeJobs[job.identifier] = job;
         [YTKACEDownloadProgressView.sharedView beginJob:job.identifier
             title:job.title thumbnailURL:job.thumbnailURL];
@@ -1364,7 +1494,34 @@ void YTKACESaveVideoToPhotosFile(NSURL *url,
         } else {
             [self startSABRJob:job];
         }
-    }];
+    }
+}
+
+- (void)retryJobWithIdentifier:(NSString *)identifier {
+    YTKACEDownloadJob *old = self.retryableJobs[identifier];
+    if (old == nil) {
+        YTKACEShowNotice(YTKACELocalized(@"Download unavailable"));
+        return;
+    }
+    [self.retryableJobs removeObjectForKey:identifier];
+    YTKACEDownloadJob *job = [YTKACEDownloadJob new];
+    job.identifier = NSUUID.UUID.UUIDString;
+    job.title = old.title;
+    job.author = old.author;
+    job.videoID = old.videoID;
+    job.thumbnailURL = old.thumbnailURL;
+    job.category = old.category;
+    job.playerResponse = old.playerResponse;
+    job.videoOption = old.videoOption;
+    job.audioOption = old.audioOption;
+    job.audioOnly = old.audioOnly;
+    job.savesToPhotos = old.savesToPhotos;
+    job.sharesFile = old.sharesFile;
+    job.useDirect = old.useDirect;
+    job.captionURL = old.captionURL;
+    job.captionLanguage = old.captionLanguage;
+    YTKACEDownloadLog(job.identifier, @"retry of %@", identifier);
+    [self launchJob:job];
 }
 
 - (void)chooseCaptionsForJob:(YTKACEDownloadJob *)job

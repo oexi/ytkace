@@ -130,6 +130,48 @@ static NSURL *YTKACEShareEntityURL(NSString *serialized) {
     return [NSURL URLWithString:[NSString stringWithFormat:format, videoID]];
 }
 
+static id YTKACEFindPlayerController(UIViewController *controller, NSString *videoID, NSUInteger depth) {
+    if (controller == nil || depth > 14) return nil;
+    SEL current = NSSelectorFromString(@"currentVideoID");
+    if ([NSStringFromClass(controller.class) isEqualToString:@"YTPlayerViewController"] &&
+        [controller respondsToSelector:current]) {
+        id value = ((id (*)(id, SEL))objc_msgSend)(controller, current);
+        if ([value isKindOfClass:NSString.class] && [value isEqualToString:videoID]) return controller;
+    }
+    for (UIViewController *child in controller.childViewControllers) {
+        id found = YTKACEFindPlayerController(child, videoID, depth + 1);
+        if (found != nil) return found;
+    }
+    return YTKACEFindPlayerController(controller.presentedViewController, videoID, depth + 1);
+}
+
+static NSURL *YTKACEShareURLWithTime(NSURL *URL) {
+    if (URL == nil || !YTKACEFeatureEnabled(@"YTKACE.Preference.Sharing.Timestamp")) return URL;
+    NSURLComponents *components = [NSURLComponents componentsWithURL:URL resolvingAgainstBaseURL:NO];
+    if (![components.path isEqualToString:@"/watch"]) return URL;
+    NSString *videoID = nil;
+    for (NSURLQueryItem *item in components.queryItems) {
+        if ([item.name isEqualToString:@"v"]) videoID = item.value;
+    }
+    if (videoID.length == 0) return URL;
+    for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
+        if (![scene isKindOfClass:UIWindowScene.class]) continue;
+        for (UIWindow *window in ((UIWindowScene *)scene).windows) {
+            id player = YTKACEFindPlayerController(window.rootViewController, videoID, 0);
+            SEL timeSel = NSSelectorFromString(@"currentVideoMediaTime");
+            if (player == nil || ![player respondsToSelector:timeSel]) continue;
+            double time = ((double (*)(id, SEL))objc_msgSend)(player, timeSel);
+            if (time < 1.0) return URL;
+            NSMutableArray *items = [components.queryItems mutableCopy] ?: [NSMutableArray array];
+            [items addObject:[NSURLQueryItem queryItemWithName:@"t"
+                                                         value:[NSString stringWithFormat:@"%lds", (long)time]]];
+            components.queryItems = items;
+            return components.URL ?: URL;
+        }
+    }
+    return URL;
+}
+
 static UIViewController *YTKACESharePresenter(void) {
     Class utils = NSClassFromString(@"YTUIUtils");
     SEL top = NSSelectorFromString(@"topViewControllerForPresenting");
@@ -166,6 +208,7 @@ static UIViewController *YTKACESharePresenter(void) {
 
 static void YTKACEPresentNativeShare(NSURL *URL, UIView *source) {
     if (URL == nil) return;
+    URL = YTKACEShareURLWithTime(URL);
     __weak UIView *weakSource = source;
     dispatch_async(dispatch_get_main_queue(), ^{
         UIViewController *presenter = YTKACESharePresenter();
@@ -184,10 +227,11 @@ static void YTKACEPresentNativeShare(NSURL *URL, UIView *source) {
                 popover.sourceView = anchor;
                 popover.sourceRect = anchor.bounds;
             } else {
-                popover.sourceView = presenter.view;
+                UIView *host = presenter.view.window ?: presenter.view;
+                popover.sourceView = host;
                 popover.sourceRect = CGRectMake(
-                    CGRectGetMidX(presenter.view.bounds),
-                    CGRectGetMidY(presenter.view.bounds), 1.0, 1.0);
+                    CGRectGetMidX(host.bounds),
+                    CGRectGetMidY(host.bounds), 1.0, 1.0);
                 popover.permittedArrowDirections = 0;
             }
         }

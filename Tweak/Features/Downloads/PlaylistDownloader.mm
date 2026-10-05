@@ -449,8 +449,257 @@ static void YTKACEPresentQualityMenu(UIView *source,
                                        actions:actions];
 }
 
+static NSString *YTKACEPlaylistRunsText(NSDictionary *text) {
+    if (![text isKindOfClass:NSDictionary.class]) return nil;
+    if ([text[@"simpleText"] isKindOfClass:NSString.class]) return text[@"simpleText"];
+    NSMutableString *out = [NSMutableString string];
+    for (NSDictionary *run in text[@"runs"]) {
+        if ([run isKindOfClass:NSDictionary.class] && [run[@"text"] isKindOfClass:NSString.class]) [out appendString:run[@"text"]];
+    }
+    return out.length != 0 ? out : nil;
+}
+
+static void YTKACECollectPlaylistJSON(id node, NSMutableArray<NSDictionary *> *items, NSMutableSet<NSString *> *seen,
+                                      NSString **continuation, NSUInteger depth) {
+    if (depth > 40) return;
+    if ([node isKindOfClass:NSArray.class]) {
+        for (id child in node) YTKACECollectPlaylistJSON(child, items, seen, continuation, depth + 1);
+        return;
+    }
+    if (![node isKindOfClass:NSDictionary.class]) return;
+    if (node[@"compactVideoModel"] != nil) return;
+    NSDictionary *context = node[@"videoWithContextModel"];
+    if ([context isKindOfClass:NSDictionary.class]) {
+        id url = nil;
+        id title = nil;
+        id author = nil;
+        @try {
+            NSDictionary *videoData = context[@"videoWithContextData"][@"videoData"];
+            url = videoData[@"dragAndDropUrl"];
+            NSDictionary *meta = videoData[@"lockupMetadata"][@"lockupMetadataViewModel"];
+            title = meta[@"title"][@"content"];
+            author = meta[@"metadata"][@"contentMetadataViewModel"][@"metadataRows"][0][@"metadataParts"][0][@"text"][@"content"];
+        } @catch (__unused NSException *exception) {
+        }
+        NSString *videoID = nil;
+        for (NSURLQueryItem *item in [url isKindOfClass:NSString.class] ? [NSURLComponents componentsWithString:url].queryItems : @[]) {
+            if ([item.name isEqualToString:@"v"]) videoID = item.value;
+        }
+        if (videoID.length == 11 && ![seen containsObject:videoID]) {
+            [seen addObject:videoID];
+            [items addObject:@{
+                @"videoId": videoID,
+                @"title": [title isKindOfClass:NSString.class] ? title : videoID,
+                @"author": [author isKindOfClass:NSString.class] ? author : @"",
+                @"thumbnail": [NSString stringWithFormat:@"https://i.ytimg.com/vi/%@/hqdefault.jpg", videoID]
+            }];
+        }
+        return;
+    }
+    NSDictionary *nextData = node[@"nextContinuationData"];
+    if ([nextData isKindOfClass:NSDictionary.class]) {
+        id token = nextData[@"continuation"];
+        if ([token isKindOfClass:NSString.class]) *continuation = token;
+        return;
+    }
+    NSDictionary *lockup = node[@"lockupViewModel"];
+    if ([lockup isKindOfClass:NSDictionary.class]) {
+        NSString *videoID = lockup[@"contentId"];
+        if ([lockup[@"contentType"] isEqual:@"LOCKUP_CONTENT_TYPE_VIDEO"] && [videoID isKindOfClass:NSString.class] &&
+            ![seen containsObject:videoID]) {
+            NSDictionary *meta = lockup[@"metadata"][@"lockupMetadataViewModel"];
+            id title = nil;
+            id author = nil;
+            @try {
+                title = meta[@"title"][@"content"];
+                author = meta[@"metadata"][@"contentMetadataViewModel"][@"metadataRows"][0][@"metadataParts"][0][@"text"][@"content"];
+            } @catch (__unused NSException *exception) {
+            }
+            [seen addObject:videoID];
+            [items addObject:@{
+                @"videoId": videoID,
+                @"title": [title isKindOfClass:NSString.class] ? title : videoID,
+                @"author": [author isKindOfClass:NSString.class] ? author : @"",
+                @"thumbnail": [NSString stringWithFormat:@"https://i.ytimg.com/vi/%@/hqdefault.jpg", videoID]
+            }];
+        }
+        return;
+    }
+    NSDictionary *nextPage = node[@"continuationItemViewModel"];
+    if ([nextPage isKindOfClass:NSDictionary.class]) {
+        id token = nil;
+        @try {
+            token = nextPage[@"continuationCommand"][@"innertubeCommand"][@"continuationCommand"][@"token"];
+        } @catch (__unused NSException *exception) {
+        }
+        if ([token isKindOfClass:NSString.class]) *continuation = token;
+        return;
+    }
+    NSDictionary *video = node[@"playlistVideoRenderer"];
+    if ([video isKindOfClass:NSDictionary.class]) {
+        NSString *videoID = video[@"videoId"];
+        if ([videoID isKindOfClass:NSString.class] && ![seen containsObject:videoID]) {
+            [seen addObject:videoID];
+            [items addObject:@{
+                @"videoId": videoID,
+                @"title": YTKACEPlaylistRunsText(video[@"title"]) ?: videoID,
+                @"author": YTKACEPlaylistRunsText(video[@"shortBylineText"]) ?: @"",
+                @"thumbnail": [NSString stringWithFormat:@"https://i.ytimg.com/vi/%@/hqdefault.jpg", videoID]
+            }];
+        }
+        return;
+    }
+    NSDictionary *more = node[@"continuationItemRenderer"];
+    if ([more isKindOfClass:NSDictionary.class]) {
+        NSString *token = more[@"continuationEndpoint"][@"continuationCommand"][@"token"];
+        if ([token isKindOfClass:NSString.class]) *continuation = token;
+        return;
+    }
+    for (id child in [(NSDictionary *)node allValues]) YTKACECollectPlaylistJSON(child, items, seen, continuation, depth + 1);
+}
+
+extern id YTKACELatestPlayerAuthorization;
+static id YTKACERequestAuthorization;
+static IMP OriginalAuthorizeCompletion;
+static IMP OriginalAuthorizeCallback;
+
+static void YTKACENoteAuthorization(id receiver, id request) {
+    if (![request isKindOfClass:NSURLRequest.class]) return;
+    NSString *host = ((NSURLRequest *)request).URL.host;
+    if ([host containsString:@"youtube"]) YTKACERequestAuthorization = receiver;
+}
+
+static void YTKACEAuthorizeCompletion(id receiver, SEL selector, id request, id handler) {
+    YTKACENoteAuthorization(receiver, request);
+    ((void (*)(id, SEL, id, id))OriginalAuthorizeCompletion)(receiver, selector, request, handler);
+}
+
+static void YTKACEAuthorizeCallback(id receiver, SEL selector, id request, id callback) {
+    YTKACENoteAuthorization(receiver, request);
+    ((void (*)(id, SEL, id, id))OriginalAuthorizeCallback)(receiver, selector, request, callback);
+}
+
+static NSString *YTKACEPlaylistAuthHeader(void) {
+    id auth = YTKACELatestPlayerAuthorization ?: YTKACERequestAuthorization;
+    if (auth == nil) return nil;
+    for (NSString *selectorName in @[@"accessToken", @"token", @"authToken", @"oauthToken"]) {
+        SEL selector = NSSelectorFromString(selectorName);
+        if (![auth respondsToSelector:selector]) continue;
+        id value = ((id (*)(id, SEL))objc_msgSend)(auth, selector);
+        if ([value isKindOfClass:NSString.class] && [value length] != 0)
+            return [@"Bearer " stringByAppendingString:value];
+    }
+    SEL authorize = NSSelectorFromString(@"authorizeRequest:completionHandler:");
+    if ([auth respondsToSelector:authorize]) {
+        NSMutableURLRequest *probe = [NSMutableURLRequest requestWithURL:
+            [NSURL URLWithString:@"https://youtubei.googleapis.com/youtubei/v1/browse"]];
+        dispatch_semaphore_t done = dispatch_semaphore_create(0);
+        ((void (*)(id, SEL, NSMutableURLRequest *, void (^)(NSError *)))objc_msgSend)(auth, authorize, probe,
+            ^(__unused NSError *error) { dispatch_semaphore_signal(done); });
+        dispatch_semaphore_wait(done, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(10 * NSEC_PER_SEC)));
+        NSString *header = [probe valueForHTTPHeaderField:@"Authorization"];
+        if (header.length != 0) return header;
+    }
+    return nil;
+}
+
+static NSArray<NSDictionary *> *YTKACEFetchPlaylistPages(NSString *playlistID, NSString *authHeader, NSUInteger *pagesOut) {
+    NSMutableArray<NSDictionary *> *items = [NSMutableArray array];
+    NSMutableSet<NSString *> *seen = [NSMutableSet set];
+    NSString *continuation = nil;
+    NSString *visitor = nil;
+    NSString *version = [NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"] ?: @"21.40.5";
+    NSString *agent = [NSString stringWithFormat:
+        @"com.google.ios.youtube/%@ (iPhone16,2; U; CPU iOS 18_6 like Mac OS X; en_US)", version];
+    NSURLSessionConfiguration *config = NSURLSessionConfiguration.ephemeralSessionConfiguration;
+    config.HTTPCookieStorage = nil;
+    config.HTTPShouldSetCookies = NO;
+    NSURLSession *session = [NSURLSession sessionWithConfiguration:config];
+    NSUInteger page = 0;
+    for (; page < 200; page++) {
+        NSMutableDictionary *client = [@{@"clientName": @"IOS", @"clientVersion": version, @"deviceMake": @"Apple",
+            @"deviceModel": @"iPhone16,2", @"osName": @"iPhone", @"osVersion": @"18.6", @"hl": @"en", @"gl": @"US"} mutableCopy];
+        if (visitor.length != 0) client[@"visitorData"] = visitor;
+        NSMutableDictionary *body = [@{@"context": @{@"client": client}} mutableCopy];
+        if (page == 0) body[@"browseId"] = [playlistID hasPrefix:@"VL"] ? playlistID : [@"VL" stringByAppendingString:playlistID];
+        else body[@"continuation"] = continuation;
+        NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:
+            [NSURL URLWithString:@"https://youtubei.googleapis.com/youtubei/v1/browse?prettyPrint=false"]];
+        request.HTTPMethod = @"POST";
+        request.timeoutInterval = 20.0;
+        [request setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
+        [request setValue:agent forHTTPHeaderField:@"User-Agent"];
+        [request setValue:@"5" forHTTPHeaderField:@"X-Youtube-Client-Name"];
+        [request setValue:version forHTTPHeaderField:@"X-Youtube-Client-Version"];
+        if (visitor.length != 0) [request setValue:visitor forHTTPHeaderField:@"X-Goog-Visitor-Id"];
+        if (authHeader.length != 0) [request setValue:authHeader forHTTPHeaderField:@"Authorization"];
+        request.HTTPBody = [NSJSONSerialization dataWithJSONObject:body options:0 error:nil];
+        dispatch_semaphore_t done = dispatch_semaphore_create(0);
+        __block NSData *data = nil;
+        __block NSInteger status = 0;
+        [[session dataTaskWithRequest:request
+            completionHandler:^(NSData *result, NSURLResponse *response, __unused NSError *error) {
+            data = result;
+            if ([response isKindOfClass:NSHTTPURLResponse.class]) status = ((NSHTTPURLResponse *)response).statusCode;
+            dispatch_semaphore_signal(done);
+        }] resume];
+        dispatch_semaphore_wait(done, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(25 * NSEC_PER_SEC)));
+        id json = data != nil ? [NSJSONSerialization JSONObjectWithData:data options:0 error:nil] : nil;
+        if (![json isKindOfClass:NSDictionary.class] || status >= 400) {
+            YTKACEDownloadLog(@"playlist", @"page %lu failed status=%ld bytes=%lu auth=%d", (unsigned long)page,
+                              (long)status, (unsigned long)data.length, authHeader.length != 0);
+            break;
+        }
+        id newVisitor = json[@"responseContext"][@"visitorData"];
+        if ([newVisitor isKindOfClass:NSString.class] && [newVisitor length] != 0) visitor = newVisitor;
+        continuation = nil;
+        NSUInteger before = items.count;
+        YTKACECollectPlaylistJSON(json, items, seen, &continuation, 0);
+        if (continuation.length == 0 || items.count == before) {
+            YTKACEDownloadLog(@"playlist", @"page %lu end items=%lu token=%d", (unsigned long)page,
+                              (unsigned long)items.count, continuation.length != 0);
+            page++;
+            break;
+        }
+    }
+    [session finishTasksAndInvalidate];
+    if (pagesOut != NULL) *pagesOut = page;
+    return items;
+}
+
+static void YTKACEFetchFullPlaylist(NSString *playlistID, void (^completion)(NSArray<NSDictionary *> *items)) {
+    if (playlistID.length == 0) {
+        completion(nil);
+        return;
+    }
+    BOOL personal = [playlistID isEqualToString:@"WL"] || [playlistID isEqualToString:@"LL"];
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        NSUInteger pages = 0;
+        NSArray<NSDictionary *> *items = personal ? @[] : YTKACEFetchPlaylistPages(playlistID, nil, &pages);
+        if (items.count == 0) {
+            NSString *header = YTKACEPlaylistAuthHeader();
+            if (header.length != 0) items = YTKACEFetchPlaylistPages(playlistID, header, &pages);
+            else YTKACEDownloadLog(@"playlist", @"no auth header player=%d request=%d",
+                                   YTKACELatestPlayerAuthorization != nil, YTKACERequestAuthorization != nil);
+        }
+        YTKACEDownloadLog(@"playlist", @"fetched %lu items in %lu pages for %@", (unsigned long)items.count,
+                          (unsigned long)pages, playlistID);
+        dispatch_async(dispatch_get_main_queue(), ^{ completion(items.count != 0 ? items : nil); });
+    });
+}
+
+static void YTKACEShowPlaylistMenu(UIView *source, NSArray<NSDictionary *> *items);
+
 static void YTKACEPresentPlaylistMenu(UIView *source) {
-    NSArray<NSDictionary *> *items = YTKACECurrentPlaylistItems();
+    NSArray<NSDictionary *> *loaded = YTKACECurrentPlaylistItems();
+    YTKACEShowNotice(YTKACELocalized(@"Loading playlist…"));
+    __weak UIView *weakSource = source;
+    YTKACEFetchFullPlaylist(YTKACECurrentPlaylistID, ^(NSArray<NSDictionary *> *full) {
+        YTKACEShowPlaylistMenu(weakSource, full.count >= loaded.count ? full : loaded);
+    });
+}
+
+static void YTKACEShowPlaylistMenu(UIView *source, NSArray<NSDictionary *> *items) {
     YTKACEDownloadCoordinator *coordinator =
         YTKACEDownloadCoordinator.sharedCoordinator;
     if (items.count == 0) {
@@ -821,6 +1070,10 @@ void YTKACEInstallPlaylistDownloaderHooks(void) {
                                             &OriginalSetRightBarButtonItems);
     YTKACEDownloadLog(@"playlist",
         @"hooks contents=%d header=%d layout=%d", contents, header, layout);
+    YTKACEInstallInstanceHook(@"SSOAuthorizationImpl", @"authorizeRequest:completionHandler:",
+                              (IMP)YTKACEAuthorizeCompletion, &OriginalAuthorizeCompletion);
+    YTKACEInstallInstanceHook(@"SSOAuthorizationImpl", @"authorizeRequest:callback:",
+                              (IMP)YTKACEAuthorizeCallback, &OriginalAuthorizeCallback);
     YTKACEInstallInstanceHook(@"YTBrowseViewController", @"viewDidAppear:",
                               (IMP)YTKACEBrowseAppear, &OriginalBrowseAppear);
     YTKACEInstallInstanceHook(@"YTBrowseViewController", @"viewWillDisappear:",

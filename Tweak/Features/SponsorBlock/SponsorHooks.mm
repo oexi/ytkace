@@ -132,6 +132,18 @@ static void YTKACESeekToTime(id controller, double time) {
     }
 }
 
+static void YTKACEFadeOutSponsorBanner(UIView *banner) {
+    if (banner == nil || banner.superview == nil) return;
+    [UIView animateWithDuration:0.25 delay:0.0
+                        options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionCurveEaseIn
+                     animations:^{
+        banner.alpha = 0.0;
+        banner.transform = CGAffineTransformMakeScale(0.96, 0.96);
+    } completion:^(__unused BOOL finished) {
+        [banner removeFromSuperview];
+    }];
+}
+
 @interface YTKACESponsorUndoTarget : NSObject
 + (instancetype)sharedTarget;
 @property(nonatomic, weak) id controller;
@@ -152,7 +164,7 @@ static void YTKACESeekToTime(id controller, double time) {
     if (controller != nil) {
         YTKACESeekToTime(controller, self.startTime);
     }
-    [self.banner removeFromSuperview];
+    YTKACEFadeOutSponsorBanner(self.banner);
 }
 @end
 
@@ -167,7 +179,7 @@ static void YTKACEShowSponsorSkippedHUD(id controller, double start, NSString *c
             return;
         }
         YTKACESponsorUndoTarget *target = YTKACESponsorUndoTarget.sharedTarget;
-        [target.banner removeFromSuperview];
+        YTKACEFadeOutSponsorBanner(target.banner);
         UIView *banner = [UIView new];
         banner.backgroundColor = [UIColor colorWithWhite:0.08 alpha:0.94];
         banner.layer.cornerRadius = 12.0;
@@ -206,6 +218,14 @@ static void YTKACEShowSponsorSkippedHUD(id controller, double start, NSString *c
         target.controller = controller;
         target.startTime = start;
         target.banner = banner;
+        banner.alpha = 0.0;
+        banner.transform = CGAffineTransformMakeScale(0.96, 0.96);
+        [UIView animateWithDuration:0.25 delay:0.0
+                            options:UIViewAnimationOptionCurveEaseOut | UIViewAnimationOptionAllowUserInteraction
+                         animations:^{
+            banner.alpha = 1.0;
+            banner.transform = CGAffineTransformIdentity;
+        } completion:nil];
         NSTimeInterval duration = notificationMode == 0
             ? YTKACESponsorUnskipAlertDuration()
             : YTKACESponsorSkipAlertDuration();
@@ -213,7 +233,7 @@ static void YTKACEShowSponsorSkippedHUD(id controller, double start, NSString *c
             (int64_t)(duration * NSEC_PER_SEC)),
             dispatch_get_main_queue(), ^{
                 if (target.banner == banner) {
-                    [banner removeFromSuperview];
+                    YTKACEFadeOutSponsorBanner(banner);
                 }
             });
     });

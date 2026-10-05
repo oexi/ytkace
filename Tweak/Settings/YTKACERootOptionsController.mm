@@ -256,7 +256,7 @@ UIViewController *YTKACEMakeDownloadLogController(void) {
     if (recognizer.state != UIGestureRecognizerStateBegan) return;
     NSIndexPath *indexPath = [self.tableView indexPathForRowAtPoint:
         [recognizer locationInView:self.tableView]];
-    if (indexPath.section == 3 && indexPath.row == 0) {
+    if (indexPath.section == (NSInteger)YTKACESettingsMenu().count && indexPath.row == 0) {
         [self showDownloadLog];
     }
 }
@@ -454,7 +454,7 @@ UIViewController *YTKACEMakeDownloadLogController(void) {
 
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView {
     (void)tableView;
-    return self.searchResults != nil ? 0 : 4;
+    return self.searchResults != nil ? 0 : (NSInteger)YTKACESettingsMenu().count + 1;
 }
 
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
@@ -462,15 +462,9 @@ UIViewController *YTKACEMakeDownloadLogController(void) {
     if (self.searchResults != nil) {
         return self.searchResults.count == 0 ? 1 : (NSInteger)self.searchResults.count;
     }
-    section += 1;
-    switch (section) {
-        case 0: return 1;
-        case 1: return 4;
-        case 2: return 5;
-        case 3: return YTKACELiquidGlassAvailable() ? 3 : 2;
-        case 4: return 2;
-        default: return 0;
-    }
+    NSArray *menu = YTKACESettingsMenu();
+    if (section < (NSInteger)menu.count) return (NSInteger)[menu[(NSUInteger)section][@"rows"] count];
+    return 2;
 }
 
 - (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section {
@@ -478,9 +472,9 @@ UIViewController *YTKACEMakeDownloadLogController(void) {
     if (self.searchResults != nil) {
         return self.searchResults.count == 0 ? @"" : YTKACELocalized(@"RESULTS");
     }
-    section += 1;
-    return @[@"", YTKACELocalized(@"MAIN"), YTKACELocalized(@"VIDEO"),
-             YTKACELocalized(@"APP"), YTKACELocalized(@"ABOUT")][(NSUInteger)section];
+    NSArray *menu = YTKACESettingsMenu();
+    if (section < (NSInteger)menu.count) return YTKACELocalized(menu[(NSUInteger)section][@"header"]);
+    return YTKACELocalized(@"ABOUT");
 }
 
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
@@ -504,9 +498,7 @@ UIViewController *YTKACEMakeDownloadLogController(void) {
 - (CGFloat)tableView:(UITableView *)tableView heightForRowAtIndexPath:(NSIndexPath *)indexPath {
     (void)tableView;
     if (self.searchResults != nil) return 62.0;
-    indexPath = [NSIndexPath indexPathForRow:indexPath.row
-                                   inSection:indexPath.section + 1];
-    if (indexPath.section == 4 && indexPath.row == 1) {
+    if (indexPath.section == (NSInteger)YTKACESettingsMenu().count && indexPath.row == 1) {
         return 92.0;
     }
     return 62.0;
@@ -578,82 +570,19 @@ UIViewController *YTKACEMakeDownloadLogController(void) {
         cell.selectionStyle = UITableViewCellSelectionStyleDefault;
         return cell;
     }
-    indexPath = [NSIndexPath indexPathForRow:indexPath.row
-                                   inSection:indexPath.section + 1];
-    if (indexPath.section == 1) {
-        NSArray *titles = @[YTKACELocalized(@"Player"), YTKACELocalized(@"SponsorBlock"),
-                            YTKACELocalized(@"Tabs"), YTKACELocalized(@"Gestures")];
-        NSArray *details = @[
-            YTKACELocalized(@"Downloads, PiP, speed, loop, and background audio"),
-            YTKACELocalized(@"Skip or mark sponsored segments"),
-            YTKACELocalized(@"Choose, reorder, and rename tabs"),
-            YTKACELocalized(@"Brightness, volume, and seeking")
-        ];
-        NSArray *symbols = @[@"play.rectangle", @"play.shield",
-                             @"rectangle.bottomthird.inset.filled", @"hand.draw"];
+    NSArray *menu = YTKACESettingsMenu();
+    if (indexPath.section < (NSInteger)menu.count) {
+        NSDictionary *row = menu[(NSUInteger)indexPath.section][@"rows"][(NSUInteger)indexPath.row];
         UITableViewCell *cell = [self baseCellForTableView:tableView style:UITableViewCellStyleSubtitle];
-        cell.textLabel.text = titles[(NSUInteger)indexPath.row];
-        cell.detailTextLabel.text = details[(NSUInteger)indexPath.row];
-        [self configureImageForCell:cell asset:@"" symbol:symbols[(NSUInteger)indexPath.row]];
-        if (indexPath.row == 1) cell.imageView.image = YTKACESponsorIcon();
-        cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
-        return cell;
-    }
-
-    if (indexPath.section == 2) {
-        NSArray *titles = @[YTKACELocalized(@"Overlay"), YTKACELocalized(@"Playback"),
-                            YTKACELocalized(@"Shorts"), YTKACELocalized(@"Wi-Fi Quality"),
-                            YTKACELocalized(@"Cellular Quality")];
-        NSArray *details = @[
-            YTKACELocalized(@"Player controls and visibility"),
-            YTKACELocalized(@"Quality, autoplay, and skip settings"),
-            YTKACELocalized(@"Buttons, downloads, and feed options"),
-            YTKACELocalized(@"Preferred quality on Wi-Fi"),
-            YTKACELocalized(@"Preferred quality on mobile data")
-        ];
-        NSArray *symbols = @[@"rectangle.on.rectangle", @"playpause",
-                             @"", @"wifi", @"antenna.radiowaves.left.and.right"];
-        UITableViewCell *cell = [self baseCellForTableView:tableView style:UITableViewCellStyleSubtitle];
-        cell.textLabel.text = titles[(NSUInteger)indexPath.row];
-        cell.detailTextLabel.text = details[(NSUInteger)indexPath.row];
-        if (indexPath.row == 2) {
+        cell.textLabel.text = YTKACELocalized(row[@"title"]);
+        cell.detailTextLabel.text = YTKACELocalized(row[@"detail"]);
+        if ([row[@"symbol"] isEqualToString:@"sponsor"]) {
+            cell.imageView.image = YTKACESponsorIcon();
+        } else if ([row[@"symbol"] isEqualToString:@"shorts"]) {
             cell.imageView.image = YTKACEShortsIcon();
         } else {
-            [self configureImageForCell:cell asset:@"" symbol:symbols[(NSUInteger)indexPath.row]];
+            [self configureImageForCell:cell asset:@"" symbol:row[@"symbol"]];
         }
-        BOOL quality = indexPath.row >= 3;
-        if (!quality) {
-            cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
-        } else {
-            NSString *key = indexPath.row == 3 ? @"YTKACE.Preference.Playback.WiFiQuality" : @"YTKACE.Preference.Playback.CellularQuality";
-            NSArray *options = @[YTKACELocalized(@"Auto"), @"2160p60", @"2160p", @"1440p60", @"1440p",
-                                 @"1080p60", @"1080p", @"720p60", @"720p", @"480p",
-                                 @"360p", @"240p", @"144p"];
-            NSArray *values = @[@0, @1, @2, @3, @4, @5, @6, @7, @8, @9, @10, @11, @12];
-            UILabel *value = [[UILabel alloc] initWithFrame:CGRectMake(0.0, 0.0, 66.0, 28.0)];
-            value.text = YTKACEPickerSummary(key, options, values, 0);
-            value.textAlignment = NSTextAlignmentRight;
-            value.font = [UIFont systemFontOfSize:15.0];
-            value.textColor = YTKACEAccentColor();
-            cell.accessoryView = value;
-        }
-        return cell;
-    }
-
-    if (indexPath.section == 3) {
-        NSArray *titles = @[YTKACELocalized(@"Navigation"), YTKACELocalized(@"Liquid Glass"), YTKACELocalized(@"Other")];
-        NSArray *details = @[
-            YTKACELocalized(@"Top bar buttons, logo, and cast"),
-            YTKACELocalized(@"Tab bar, menus, toasts, and player"),
-            YTKACELocalized(@"Appearance, privacy, and compatibility")
-        ];
-        NSArray *symbols = @[@"rectangle.topthird.inset.filled", @"drop", @"ellipsis.circle"];
-        NSUInteger row = (NSUInteger)indexPath.row;
-        if (!YTKACELiquidGlassAvailable() && row >= 1) row++;
-        UITableViewCell *cell = [self baseCellForTableView:tableView style:UITableViewCellStyleSubtitle];
-        cell.textLabel.text = titles[row];
-        cell.detailTextLabel.text = details[row];
-        [self configureImageForCell:cell asset:@"" symbol:symbols[row]];
         cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
         return cell;
     }
@@ -684,59 +613,16 @@ UIViewController *YTKACEMakeDownloadLogController(void) {
         YTKACEOpenSettingsRecord(self.searchResults[(NSUInteger)indexPath.row], self);
         return;
     }
-    const NSInteger group = indexPath.section + 1;
-    if (group == 4 && indexPath.row == 0) {
+    NSArray *menu = YTKACESettingsMenu();
+    if (indexPath.section >= (NSInteger)menu.count) {
+        if (indexPath.row != 0) return;
         NSURL *URL = [NSURL URLWithString:@"https://github.com/itzzace/ytkace"];
         [UIApplication.sharedApplication openURL:URL options:@{}
                                completionHandler:nil];
         return;
     }
-    UIViewController *controller = nil;
-    if (group == 2 && (indexPath.row == 3 || indexPath.row == 4)) {
-            NSString *title = indexPath.row == 3 ? YTKACELocalized(@"Wi-Fi Quality") : YTKACELocalized(@"Cellular Quality");
-            NSString *key = indexPath.row == 3 ? @"YTKACE.Preference.Playback.WiFiQuality" : @"YTKACE.Preference.Playback.CellularQuality";
-            NSArray *titles = @[YTKACELocalized(@"Auto"), @"2160p60", @"2160p", @"1440p60", @"1440p",
-                                @"1080p60", @"1080p", @"720p60", @"720p", @"480p",
-                                @"360p", @"240p", @"144p"];
-            NSArray *values = @[@0, @1, @2, @3, @4, @5, @6, @7, @8, @9, @10, @11, @12];
-            UITableViewCell *cell = [tableView cellForRowAtIndexPath:indexPath];
-            YTKACEPresentChoiceMenu(self, cell, title, titles, values, key, 0,
-                ^(__unused NSUInteger position) {
-                    [self.tableView reloadRowsAtIndexPaths:@[indexPath]
-                                          withRowAnimation:UITableViewRowAnimationNone];
-                });
-            return;
-    }
-    if (group == 1) {
-        NSArray *builders = @[
-            [^UIViewController *{ return YTKACEMakePlayerControlsController(); } copy],
-            [^UIViewController *{ return YTKACEMakeSponsorBlockController(); } copy],
-            [^UIViewController *{ return YTKACEMakeTabBarOptionsController(); } copy],
-            [^UIViewController *{ return YTKACEMakeGestureOptionsController(); } copy]
-        ];
-        UIViewController *(^builder)(void) = builders[(NSUInteger)indexPath.row];
-        controller = builder();
-    } else if (group == 2) {
-        NSArray *builders = @[
-            [^UIViewController *{ return YTKACEMakeOverlayOptionsController(); } copy],
-            [^UIViewController *{ return YTKACEMakeStreamingOptionsController(); } copy],
-            [^UIViewController *{ return YTKACEMakeShortsOptionsController(); } copy],
-            [^UIViewController *{ return nil; } copy],
-            [^UIViewController *{ return nil; } copy]
-        ];
-        UIViewController *(^builder)(void) = builders[(NSUInteger)indexPath.row];
-        controller = builder();
-    } else if (group == 3) {
-        NSArray *builders = @[
-            [^UIViewController *{ return YTKACEMakeNavigationOptionsController(); } copy],
-            [^UIViewController *{ return YTKACEMakeGlassOptionsController(); } copy],
-            [^UIViewController *{ return YTKACEMakeMiscOptionsController(); } copy]
-        ];
-        NSUInteger row = (NSUInteger)indexPath.row;
-        if (!YTKACELiquidGlassAvailable() && row >= 1) row++;
-        UIViewController *(^builder)(void) = builders[row];
-        controller = builder();
-    }
+    NSDictionary *row = menu[(NSUInteger)indexPath.section][@"rows"][(NSUInteger)indexPath.row];
+    UIViewController *controller = YTKACEMakeSettingsPage(row[@"id"]);
     if (controller != nil) {
         [self.navigationController setNavigationBarHidden:NO animated:NO];
         [self.navigationController pushViewController:controller animated:YES];
