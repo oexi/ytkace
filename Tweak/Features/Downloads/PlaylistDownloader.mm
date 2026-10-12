@@ -459,11 +459,17 @@ static NSString *YTKACEPlaylistRunsText(NSDictionary *text) {
     return out.length != 0 ? out : nil;
 }
 
+static void YTKACEAddPlaylistToken(NSMutableArray<NSString *> *tokens, id token, BOOL inList) {
+    if (![token isKindOfClass:NSString.class] || [token length] == 0 || [tokens containsObject:token]) return;
+    if (inList) [tokens insertObject:token atIndex:0];
+    else [tokens addObject:token];
+}
+
 static void YTKACECollectPlaylistJSON(id node, NSMutableArray<NSDictionary *> *items, NSMutableSet<NSString *> *seen,
-                                      NSString **continuation, NSUInteger depth) {
+                                      NSMutableArray<NSString *> *tokens, BOOL inList, NSUInteger depth) {
     if (depth > 40) return;
     if ([node isKindOfClass:NSArray.class]) {
-        for (id child in node) YTKACECollectPlaylistJSON(child, items, seen, continuation, depth + 1);
+        for (id child in node) YTKACECollectPlaylistJSON(child, items, seen, tokens, inList, depth + 1);
         return;
     }
     if (![node isKindOfClass:NSDictionary.class]) return;
@@ -498,8 +504,7 @@ static void YTKACECollectPlaylistJSON(id node, NSMutableArray<NSDictionary *> *i
     }
     NSDictionary *nextData = node[@"nextContinuationData"];
     if ([nextData isKindOfClass:NSDictionary.class]) {
-        id token = nextData[@"continuation"];
-        if ([token isKindOfClass:NSString.class]) *continuation = token;
+        YTKACEAddPlaylistToken(tokens, nextData[@"continuation"], inList);
         return;
     }
     NSDictionary *lockup = node[@"lockupViewModel"];
@@ -532,7 +537,7 @@ static void YTKACECollectPlaylistJSON(id node, NSMutableArray<NSDictionary *> *i
             token = nextPage[@"continuationCommand"][@"innertubeCommand"][@"continuationCommand"][@"token"];
         } @catch (__unused NSException *exception) {
         }
-        if ([token isKindOfClass:NSString.class]) *continuation = token;
+        YTKACEAddPlaylistToken(tokens, token, inList);
         return;
     }
     NSDictionary *video = node[@"playlistVideoRenderer"];
@@ -551,11 +556,16 @@ static void YTKACECollectPlaylistJSON(id node, NSMutableArray<NSDictionary *> *i
     }
     NSDictionary *more = node[@"continuationItemRenderer"];
     if ([more isKindOfClass:NSDictionary.class]) {
-        NSString *token = more[@"continuationEndpoint"][@"continuationCommand"][@"token"];
-        if ([token isKindOfClass:NSString.class]) *continuation = token;
+        YTKACEAddPlaylistToken(tokens, more[@"continuationEndpoint"][@"continuationCommand"][@"token"], inList);
         return;
     }
-    for (id child in [(NSDictionary *)node allValues]) YTKACECollectPlaylistJSON(child, items, seen, continuation, depth + 1);
+    static NSSet<NSString *> *listKeys;
+    if (listKeys == nil) listKeys = [NSSet setWithArray:@[@"itemSectionRenderer", @"itemSectionContinuation",
+        @"playlistVideoListRenderer", @"playlistVideoListContinuation"]];
+    for (NSString *key in (NSDictionary *)node) {
+        BOOL childInList = inList || ([key isKindOfClass:NSString.class] && [listKeys containsObject:key]);
+        YTKACECollectPlaylistJSON(((NSDictionary *)node)[key], items, seen, tokens, childInList, depth + 1);
+    }
 }
 
 extern id YTKACELatestPlayerAuthorization;
@@ -607,6 +617,9 @@ static NSArray<NSDictionary *> *YTKACEFetchPlaylistPages(NSString *playlistID, N
     NSMutableArray<NSDictionary *> *items = [NSMutableArray array];
     NSMutableSet<NSString *> *seen = [NSMutableSet set];
     NSString *continuation = nil;
+    NSMutableArray<NSString *> *fallbacks = [NSMutableArray array];
+    NSMutableSet<NSString *> *tried = [NSMutableSet set];
+    NSUInteger empty = 0;
     NSString *visitor = nil;
     NSString *version = [NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"] ?: @"21.40.5";
     NSString *agent = [NSString stringWithFormat:
@@ -652,15 +665,34 @@ static NSArray<NSDictionary *> *YTKACEFetchPlaylistPages(NSString *playlistID, N
         }
         id newVisitor = json[@"responseContext"][@"visitorData"];
         if ([newVisitor isKindOfClass:NSString.class] && [newVisitor length] != 0) visitor = newVisitor;
-        continuation = nil;
         NSUInteger before = items.count;
-        YTKACECollectPlaylistJSON(json, items, seen, &continuation, 0);
-        if (continuation.length == 0 || items.count == before) {
-            YTKACEDownloadLog(@"playlist", @"page %lu end items=%lu token=%d", (unsigned long)page,
-                              (unsigned long)items.count, continuation.length != 0);
+        NSMutableArray<NSString *> *tokens = [NSMutableArray array];
+        YTKACECollectPlaylistJSON(json, items, seen, tokens, NO, 0);
+        BOOL added = items.count != before;
+        if (added) [fallbacks removeAllObjects];
+        for (NSString *token in tokens.reverseObjectEnumerator) {
+            if (![tried containsObject:token]) [fallbacks insertObject:token atIndex:0];
+        }
+        continuation = fallbacks.firstObject;
+        if (continuation != nil) [fallbacks removeObjectAtIndex:0];
+        NSString *alert = nil;
+        id alerts = json[@"alerts"];
+        if ([alerts isKindOfClass:NSArray.class] && [alerts count] != 0 && [[alerts firstObject] isKindOfClass:NSDictionary.class]) {
+            NSDictionary *first = [alerts firstObject];
+            NSDictionary *renderer = first[@"alertRenderer"] ?: first[@"alertWithButtonRenderer"];
+            if ([renderer isKindOfClass:NSDictionary.class])
+                alert = YTKACEPlaylistRunsText(renderer[@"text"]) ?: YTKACEPlaylistRunsText(renderer[@"title"]);
+        }
+        YTKACEDebugLog(@"playlist", @"page %lu auth=%d status=%ld bytes=%lu added=%lu tokens=%lu alert=%@",
+                          (unsigned long)page, authHeader.length != 0, (long)status, (unsigned long)data.length,
+                          (unsigned long)(items.count - before), (unsigned long)tokens.count, alert ?: @"-");
+        empty = added ? 0 : empty + 1;
+        if (continuation.length == 0 || empty >= 2) {
+            YTKACEDownloadLog(@"playlist", @"page %lu end items=%lu", (unsigned long)page, (unsigned long)items.count);
             page++;
             break;
         }
+        [tried addObject:continuation];
     }
     [session finishTasksAndInvalidate];
     if (pagesOut != NULL) *pagesOut = page;
@@ -678,6 +710,9 @@ static void YTKACEFetchFullPlaylist(NSString *playlistID, void (^completion)(NSA
         NSArray<NSDictionary *> *items = personal ? @[] : YTKACEFetchPlaylistPages(playlistID, nil, &pages);
         if (items.count == 0) {
             NSString *header = YTKACEPlaylistAuthHeader();
+            YTKACEDebugLog(@"playlist", @"auth personal=%d header=%d player=%d request=%d", personal,
+                              header.length != 0, YTKACELatestPlayerAuthorization != nil,
+                              YTKACERequestAuthorization != nil);
             if (header.length != 0) items = YTKACEFetchPlaylistPages(playlistID, header, &pages);
             else YTKACEDownloadLog(@"playlist", @"no auth header player=%d request=%d",
                                    YTKACELatestPlayerAuthorization != nil, YTKACERequestAuthorization != nil);

@@ -138,6 +138,24 @@ void YTKACEApplyAppearance(UIViewController *controller) {
         [[UIBarButtonItem alloc] initWithTitle:YTKACELocalized(@"Copy") style:UIBarButtonItemStylePlain
             target:self action:@selector(copyLog)]
     ];
+    self.navigationItem.leftItemsSupplementBackButton = YES;
+    self.navigationItem.leftBarButtonItem = [[UIBarButtonItem alloc]
+        initWithTitle:@"" style:UIBarButtonItemStylePlain target:self action:@selector(toggleDebugLogs)];
+    [self updateDebugButton];
+}
+
+- (void)updateDebugButton {
+    self.navigationItem.leftBarButtonItem.title = YTKACEDebugLogsEnabled()
+        ? YTKACELocalized(@"Debug: On") : YTKACELocalized(@"Debug: Off");
+}
+
+- (void)toggleDebugLogs {
+    BOOL enabled = !YTKACEDebugLogsEnabled();
+    YTKACESetDebugLogsEnabled(enabled);
+    YTKACEDownloadLog(@"debug", @"debug logs %@", enabled ? @"on" : @"off");
+    [self updateDebugButton];
+    YTKACEShowNotice(enabled ? YTKACELocalized(@"Debug logs on") : YTKACELocalized(@"Debug logs off"));
+    self.textView.text = YTKACEDownloadLogContents();
 }
 
 - (void)viewWillAppear:(BOOL)animated {

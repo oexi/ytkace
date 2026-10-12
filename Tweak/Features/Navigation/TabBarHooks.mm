@@ -3264,7 +3264,56 @@ static BOOL YTKACEFrostedPermitted(id receiver, SEL selector) {
     return OriginalFrostedPermitted != NULL && ((BOOL (*)(id, SEL))OriginalFrostedPermitted)(receiver, selector);
 }
 
+static NSString *YTKACEColorText(UIColor *color) {
+    if (color == nil) return @"nil";
+    CGFloat red = 0.0, green = 0.0, blue = 0.0, alpha = 0.0;
+    if (![color getRed:&red green:&green blue:&blue alpha:&alpha]) return @"?";
+    return [NSString stringWithFormat:@"%.2f,%.2f,%.2f,%.2f", red, green, blue, alpha];
+}
+
+static NSString *YTKACEPivotItemColors(UIView *item) {
+    if (item == nil) return @"-";
+    UIImageView *icon = YTKACEFindImageView(item);
+    UILabel *label = YTKACEFindNativeLabel(item);
+    return [NSString stringWithFormat:@"%@ icon=%@ label=%@", YTKACEPivotItemIdentifier(item) ?: @"?",
+            YTKACEColorText(icon.tintColor), YTKACEColorText(label.textColor)];
+}
+
+static void YTKACELogPivotState(UIView *receiver) {
+    if (receiver.window == nil || !YTKACEDebugLogsEnabled()) return;
+    UIView *selected = YTKACESelectedPivotItem(receiver);
+    UIView *other = nil;
+    for (UIView *item in YTKACESortedPivotItems(receiver)) {
+        if (item != selected && !item.hidden) {
+            other = item;
+            break;
+        }
+    }
+    UIVisualEffectView *glass = objc_getAssociatedObject(receiver, YTKACEPivotBarGlassAssociation);
+    NSString *selectedID = YTKACEPivotItemIdentifier(selected);
+    NSString *state = [NSString stringWithFormat:
+        @"tab=%@ shorts=%d glass=%d glassFrame=%@ minimized=%d alpha=%.2f hidden=%d bg=%@ style=%ld trait=%ld "
+        @"backdrop=%@ pill=%@ selected[%@] other[%@]",
+        selectedID ?: @"none", [selectedID isEqualToString:@"FEshorts"], glass.superview == receiver,
+        glass.superview == receiver ? NSStringFromCGRect(glass.frame) : @"-", YTKACEBarMinimized(receiver),
+        receiver.alpha, receiver.hidden, YTKACEColorText(receiver.backgroundColor),
+        (long)receiver.overrideUserInterfaceStyle, (long)receiver.traitCollection.userInterfaceStyle,
+        YTKACEColorText(receiver.superview.backgroundColor), YTKACEColorText(YTKACEPillColor()),
+        YTKACEPivotItemColors(selected), YTKACEPivotItemColors(other)];
+    static NSString *lastState;
+    if ([state isEqualToString:lastState]) return;
+    lastState = state;
+    YTKACEDebugLog(@"tabbar", @"%@", state);
+}
+
+static void YTKACEApplyPivotBarBackgroundInner(UIView *receiver);
+
 static void YTKACEApplyPivotBarBackground(UIView *receiver) {
+    YTKACEApplyPivotBarBackgroundInner(receiver);
+    YTKACELogPivotState(receiver);
+}
+
+static void YTKACEApplyPivotBarBackgroundInner(UIView *receiver) {
     if (YTKACERefreshTabTint()) {
         for (UIView *item in YTKACESortedPivotItems(receiver)) {
             YTKACERestyleSelectedTab(item);

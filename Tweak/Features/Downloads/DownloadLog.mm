@@ -52,12 +52,37 @@ static dispatch_queue_t YTKACEDownloadLogQueue(void) {
     return queue;
 }
 
+static NSString * const YTKACEDebugLogsKey = @"YTKACE.Preference.Developer.DebugLogs";
+
+BOOL YTKACEDebugLogsEnabled(void) {
+    return [NSUserDefaults.standardUserDefaults boolForKey:YTKACEDebugLogsKey];
+}
+
+void YTKACESetDebugLogsEnabled(BOOL enabled) {
+    [NSUserDefaults.standardUserDefaults setBool:enabled forKey:YTKACEDebugLogsKey];
+}
+
+static void YTKACEWriteLogLine(NSString *identifier, NSString *message);
+
 void YTKACEDownloadLog(NSString *identifier, NSString *format, ...) {
     if (format.length == 0) return;
     va_list arguments;
     va_start(arguments, format);
     NSString *message = [[NSString alloc] initWithFormat:format arguments:arguments];
     va_end(arguments);
+    YTKACEWriteLogLine(identifier, message);
+}
+
+void YTKACEDebugLog(NSString *identifier, NSString *format, ...) {
+    if (format.length == 0 || !YTKACEDebugLogsEnabled()) return;
+    va_list arguments;
+    va_start(arguments, format);
+    NSString *message = [[NSString alloc] initWithFormat:format arguments:arguments];
+    va_end(arguments);
+    YTKACEWriteLogLine(identifier, message);
+}
+
+static void YTKACEWriteLogLine(NSString *identifier, NSString *message) {
     if (message.length > 4096) message = [message substringToIndex:4096];
     NSString *line = [NSString stringWithFormat:@"%@ [%@] %@\n",
         NSDate.date, identifier.length == 0 ? @"download" : identifier, message];

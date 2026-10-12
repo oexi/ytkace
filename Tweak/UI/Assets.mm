@@ -14,17 +14,26 @@ static NSArray<NSString *> *YTKACECandidateBundlePaths(void) {
     NSMutableArray<NSString *> *candidates = [NSMutableArray array];
     NSString *loaded = YTKACELoadedImagePath();
     if (loaded.length != 0) {
+        for (NSString *marker in @[@"/Library/MobileSubstrate/DynamicLibraries/", @"/usr/lib/TweakInject/"]) {
+            NSRange range = [loaded rangeOfString:marker];
+            if (range.location == NSNotFound) continue;
+            NSString *root = [loaded substringToIndex:range.location];
+            [candidates addObject:[root stringByAppendingPathComponent:
+                @"Library/Application Support/YTKACE.bundle"]];
+        }
         NSString *directory = loaded.stringByDeletingLastPathComponent;
-        while (directory.length > 1) {
+        for (NSUInteger level = 0; level < 2 && directory.length > 1; level++) {
             [candidates addObject:
                 [directory stringByAppendingPathComponent:@"YTKACE.bundle"]];
-            if (candidates.count >= 2) break;
             directory = directory.stringByDeletingLastPathComponent;
         }
     }
     NSString *packaged = [NSBundle.mainBundle pathForResource:@"YTKACE"
                                                        ofType:@"bundle"];
     if (packaged.length != 0) [candidates addObject:packaged];
+    [candidates addObject:@"/var/jb/Library/Application Support/YTKACE.bundle"];
+    [candidates addObject:@"/Library/Application Support/YTKACE.bundle"];
+    [candidates addObject:@"/var/jb/Library/MobileSubstrate/DynamicLibraries/YTKACE.bundle"];
     return candidates;
 }
 

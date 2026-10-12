@@ -10,6 +10,10 @@ YTKACE statically links FFmpeg 8.1.2 for local media processing. It is built fro
 
 SponsorBlock and DeArrow community data is provided by the SponsorBlock service under CC BY-NC-SA 4.0. See https://sponsor.ajay.app/. The shield image shipped in `YTKACE.bundle` is SponsorBlock's artwork, taken from the same site and used to mark the integration.
 
+## AiSList
+
+Hide AI Channels uses the AiSList blocklist and warnlist from [aisloplist.com](https://aisloplist.com), maintained by the AiSList community at [Override92/AiSList](https://github.com/Override92/AiSList) and licensed under [CC BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/). The lists are downloaded unmodified and only read to match channels in the feed and search. The list locations and the idea of matching channel handles in feed data came from the [Morphe](https://github.com/MorpheApp/morphe-patches) AiSList patch. No Morphe code is used.
+
 ## SABR reference
 
 The download path implements YouTube's SABR streaming protocol. It was written for YTKACE, developed against an iPad on iOS 16. Protocol understanding came in part from reading [LuanRT/googlevideo](https://github.com/LuanRT/googlevideo), an MIT-licensed library implementing UMP and SABR. No code from that project is included.

@@ -47,6 +47,12 @@ static NSDictionary *YTKACEToggle(NSString *title,
     };
 }
 
+static NSDictionary *YTKACEWithFooter(NSDictionary *item, NSString *footer) {
+    NSMutableDictionary *copy = [item mutableCopy];
+    copy[@"footer"] = YTKACELocalized(footer);
+    return copy;
+}
+
 static NSDictionary *YTKACEToggleDetail(NSString *title,
                                          NSString *subtitle,
                                          NSString *key) {
@@ -622,6 +628,17 @@ NSString *YTKACEPickerSummary(NSString *key,
     }
     NSString *title = _sectionTitles[(NSUInteger)section];
     return title.length == 0 ? nil : title;
+}
+
+- (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
+    (void)tableView;
+    id footer = _sections[(NSUInteger)section].lastObject[@"footer"];
+    return [footer isKindOfClass:NSString.class] ? footer : nil;
+}
+
+- (CGFloat)tableView:(UITableView *)tableView heightForFooterInSection:(NSInteger)section {
+    id footer = _sections[(NSUInteger)section].lastObject[@"footer"];
+    return [footer isKindOfClass:NSString.class] ? UITableViewAutomaticDimension : tableView.sectionFooterHeight;
 }
 
 - (CGFloat)tableView:(UITableView *)tableView heightForHeaderInSection:(NSInteger)section {
@@ -1648,8 +1665,17 @@ static NSDictionary *YTKACEFeedDefinition(void) {
             YTKACEToggleDetail(@"Remove Playables",
                                @"Removes playable games from the feed.",
                                @"YTKACE.Preference.Feed.PlayablesHidden")
+        ],
+        @[
+            YTKACEToggleDetail(@"Hide AI Channels",
+                               @"Hides videos from channels on the AiSList blocklist.",
+                               @"YTKACE.Preference.Feed.AIChannelsHidden"),
+            YTKACEWithFooter(YTKACEToggleDetail(@"Hide Suspected AI Channels",
+                               @"Also hides channels on the AiSList warnlist.",
+                               @"YTKACE.Preference.Feed.SuspectedAIChannelsHidden"),
+                             @"List from aisloplist.com, updates automatically.")
         ]
-    ], @[YTKACELocalized(@"HOME"), YTKACELocalized(@"FEED")]);
+    ], @[YTKACELocalized(@"HOME"), YTKACELocalized(@"FEED"), YTKACELocalized(@"AI CHANNELS")]);
 }
 
 static NSDictionary *YTKACEShortsOptionsDefinition(void) {

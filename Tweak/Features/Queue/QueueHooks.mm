@@ -427,6 +427,11 @@ static BOOL YTKACEQueueReplayCurrent(void) {
     return NO;
 }
 
+static BOOL YTKACEQueueOverlayLoop(void) {
+    return YTKACEFeatureEnabled(YTKACELoopKey) &&
+        [NSUserDefaults.standardUserDefaults boolForKey:@"defaultLoop_enabled"];
+}
+
 static BOOL YTKACEQueueStep(NSInteger offset) {
     if (!YTKACEFeatureEnabled(YTKACEQueueKey)) return NO;
     NSArray *queue = [YTKACEQueue() copy];
@@ -454,7 +459,7 @@ static void YTKACEQueueAdvance(void) {
     NSUInteger current = YTKACEQueueIndexOfVideo(currentID);
     if (current == NSNotFound) return;
     const long long loop = YTKACEQueueLoopMode();
-    if (loop == 2) {
+    if (loop == 2 || YTKACEQueueOverlayLoop()) {
         YTKACEQueueReplayCurrent();
         return;
     }
@@ -980,10 +985,14 @@ static void YTKACEQueueDidPressPrevious(id receiver, SEL selector, id sender) {
 }
 
 static void YTKACEQueueAutonavPlayNext(id receiver, SEL selector) {
+    BOOL active = YTKACEQueueIsActive();
+    if (active && YTKACEQueueOverlayLoop()) {
+        if (YTKACEQueueReplayCurrent()) return;
+    }
     if (YTKACEQueueStep(1)) {
         return;
     }
-    if (YTKACEQueueIsActive()) {
+    if (active) {
         return;
     }
     if (OriginalAutonavPlayNext == NULL) return;

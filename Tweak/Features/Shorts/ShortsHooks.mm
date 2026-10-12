@@ -587,6 +587,33 @@ static BOOL YTKACEAdvanceShort(id controller, id sender) {
         }
         return YES;
     }
+    SEL reelAdvance = NSSelectorFromString(@"advanceToNextReelWithTransitionType:");
+    id current = controller;
+    for (NSInteger depth = 0; current != nil && depth < 8; depth++) {
+        Method method = class_getInstanceMethod([current class], reelAdvance);
+        if (method != NULL) {
+            char type[8] = {0};
+            method_getArgumentType(method, 2, type, sizeof(type));
+            if (strchr("qQiIlL", type[0]) != NULL && type[1] == 0) {
+                ((void (*)(id, SEL, long long))objc_msgSend)(current, reelAdvance, 0);
+                return YES;
+            }
+        }
+        id parent = YTKACEShortsParent(current);
+        current = parent != nil && parent != current ? parent
+            : ([current isKindOfClass:UIResponder.class] ? ((UIResponder *)current).nextResponder : nil);
+    }
+    UIView *view = [controller isKindOfClass:UIViewController.class] ? ((UIViewController *)controller).view : nil;
+    for (UIView *candidate = view.superview; candidate != nil; candidate = candidate.superview) {
+        if (![candidate isKindOfClass:UIScrollView.class]) continue;
+        UIScrollView *pager = (UIScrollView *)candidate;
+        CGFloat page = CGRectGetHeight(pager.bounds);
+        if (page < 100.0 || page < CGRectGetHeight(view.bounds) * 0.9) continue;
+        CGFloat next = round(pager.contentOffset.y / page) * page + page;
+        if (next > pager.contentSize.height - page + 1.0) break;
+        [pager setContentOffset:CGPointMake(pager.contentOffset.x, next) animated:YES];
+        return YES;
+    }
     return NO;
 }
 
@@ -669,6 +696,8 @@ static void YTKACEUpdateShortsProgress(void) {
 @end
 
 static const void *YTKACEShortsPinchAssociation = &YTKACEShortsPinchAssociation;
+static const void *YTKACEShortsRetryAssociation = &YTKACEShortsRetryAssociation;
+static void YTKACEConfigureReelView(UIView *receiver, BOOL showDownload);
 static IMP OriginalReelElementLayout;
 
 static void YTKACEReelElementLayout(UIView *receiver, SEL selector) {
@@ -805,6 +834,23 @@ static void YTKACEConfigureReelView(UIView *receiver, BOOL showDownload) {
             }
         }
         (void)duplicates;
+    }
+    if (showDownload && download != nil && download.hidden && YTKACEDownloadsEnabled() && action == nil &&
+        downloadHost != nil) {
+        NSUInteger retries = [objc_getAssociatedObject(downloadHost, YTKACEShortsRetryAssociation) unsignedIntegerValue];
+        if (retries < 4) {
+            objc_setAssociatedObject(downloadHost, YTKACEShortsRetryAssociation, @(retries + 1),
+                                     OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+            static const double delays[] = {0.3, 0.7, 1.5, 3.0};
+            __weak UIView *weakReceiver = receiver;
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delays[retries] * NSEC_PER_SEC)),
+                           dispatch_get_main_queue(), ^{
+                UIView *strongReceiver = weakReceiver;
+                if (strongReceiver.window != nil) YTKACEConfigureReelView(strongReceiver, YES);
+            });
+        }
+    } else if (download != nil && !download.hidden) {
+        objc_setAssociatedObject(downloadHost, YTKACEShortsRetryAssociation, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
     static NSTimeInterval lastResolve = 0.0;
     NSTimeInterval now = NSDate.date.timeIntervalSince1970;

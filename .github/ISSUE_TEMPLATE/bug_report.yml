@@ -1,0 +1,115 @@
+name: Bug Report
+description: File an issue about unintended behavior, crashes, or broken UI in YTKACE.
+title: "bug: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please fill out the form below accurately to help diagnose and resolve the issue.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Pre-submission Checklist
+      description: Confirm the following requirements before submitting.
+      options:
+        - label: I searched open and closed issues to verify this is not a duplicate.
+          required: true
+        - label: I am using the latest build of YTKACE.
+          required: true
+        - label: I confirmed this glitch is caused by YTKACE, not an official YouTube outage or native bug.
+          required: true
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Issue Summary
+      description: A concise overview of the problem encountered.
+      placeholder: Briefly explain what went wrong.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction Steps
+      description: Exact sequential actions required to trigger this bug.
+      placeholder: |
+        1. Launch YouTube
+        2. Navigate to...
+        3. Tap...
+        4. Observe crash/glitch
+    validations:
+      required: true
+
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Expected vs Actual Behavior
+      description: What should have happened versus what actually occurred.
+      placeholder: |
+        Expected:
+        Actual:
+    validations:
+      required: true
+
+  - type: dropdown
+    id: installation
+    attributes:
+      label: Installation & Injection Method
+      description: Select how YTKACE was injected into your YouTube app.
+      options:
+        - Sideloaded
+        - TrollStore
+        - Jailbroken (Rootless)
+        - Jailbroken (Rootful)
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: ytkace-version
+    attributes:
+      label: YTKACE Version
+      description: Check the footer of the YTKACE preferences menu.
+      placeholder: e.g. v1.1.2
+    validations:
+      required: true
+
+  - type: input
+    id: yt-version
+    attributes:
+      label: YouTube App Version
+      description: Target YouTube version installed on the device. Check the footer of the YTKACE preferences menu.
+      placeholder: e.g. 21.40.5
+    validations:
+      required: true
+
+  - type: input
+    id: device-specs
+    attributes:
+      label: Device & iOS Firmware
+      description: Specify the hardware model and OS build.
+      placeholder: e.g. iPhone 18 Pro - iOS 27.0
+    validations:
+      required: true
+
+  - type: textarea
+    id: conflicting-tweaks
+    attributes:
+      label: Co-injected Tweaks & Dylibs
+      description: List any other tweaks injected into the same IPA (e.g. Return YouTube Dislike, YouPiP).
+      placeholder: None / List names here
+    validations:
+      required: false
+
+  - type: textarea
+    id: media-logs
+    attributes:
+      label: Crash Logs & Attachments
+      description: Paste relevant stack traces, or drag and drop screenshots, screen recordings, and crash files (.ips).
+      placeholder: Attach files or paste logs here.
+    validations:
+      required: false

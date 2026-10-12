@@ -936,3 +936,13 @@
 "%lu failed" = "%lu com falha";
 "Downloading" = "Baixando";
 "All" = "Tudo";
+"AI CHANNELS" = "CANAIS DE IA";
+"Hide AI Channels" = "Ocultar canais de IA";
+"Hides videos from channels on the AiSList blocklist." = "Oculta vídeos de canais da lista de bloqueio do AiSList.";
+"Hide Suspected AI Channels" = "Ocultar canais suspeitos de IA";
+"Also hides channels on the AiSList warnlist." = "Também oculta canais da lista de alerta do AiSList.";
+"List from aisloplist.com, updates automatically." = "Lista do aisloplist.com, atualizada automaticamente.";
+"Debug: On" = "Depuração: Sim";
+"Debug: Off" = "Depuração: Não";
+"Debug logs on" = "Logs de depuração ativados";
+"Debug logs off" = "Logs de depuração desativados";

@@ -132,16 +132,110 @@ static void YTKACESeekToTime(id controller, double time) {
     }
 }
 
+static UIVisualEffectView *YTKACESponsorBannerGlass(UIView *banner) {
+    for (UIView *subview in banner.subviews) {
+        if ([subview isKindOfClass:UIVisualEffectView.class]) return (UIVisualEffectView *)subview;
+    }
+    return nil;
+}
+
+static const void *YTKACESponsorBannerExpired = &YTKACESponsorBannerExpired;
+
 static void YTKACEFadeOutSponsorBanner(UIView *banner) {
     if (banner == nil || banner.superview == nil) return;
+    for (UIGestureRecognizer *gesture in banner.gestureRecognizers) {
+        if (gesture.state == UIGestureRecognizerStateBegan || gesture.state == UIGestureRecognizerStateChanged) {
+            objc_setAssociatedObject(banner, YTKACESponsorBannerExpired, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+            return;
+        }
+    }
+    UIVisualEffectView *glass = YTKACESponsorBannerGlass(banner);
     [UIView animateWithDuration:0.25 delay:0.0
                         options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionCurveEaseIn
                      animations:^{
         banner.alpha = 0.0;
-        banner.transform = CGAffineTransformMakeScale(0.96, 0.96);
+        banner.transform = CGAffineTransformScale(banner.transform, 0.96, 0.96);
+        glass.effect = nil;
     } completion:^(__unused BOOL finished) {
         [banner removeFromSuperview];
     }];
+}
+
+static void YTKACEFadeInSponsorBanner(UIView *banner) {
+    UIVisualEffectView *glass = YTKACESponsorBannerGlass(banner);
+    UIVisualEffect *effect = glass.effect;
+    [banner.superview layoutIfNeeded];
+    banner.alpha = 0.0;
+    banner.transform = CGAffineTransformMakeScale(0.96, 0.96);
+    glass.effect = nil;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [UIView animateWithDuration:0.3 delay:0.0
+                            options:UIViewAnimationOptionCurveEaseOut | UIViewAnimationOptionAllowUserInteraction
+                         animations:^{
+            banner.alpha = 1.0;
+            banner.transform = CGAffineTransformIdentity;
+            glass.effect = effect;
+        } completion:nil];
+    });
+}
+
+@interface YTKACESponsorBannerSwipe : NSObject
++ (instancetype)shared;
+- (void)panned:(UIPanGestureRecognizer *)pan;
+@end
+
+@implementation YTKACESponsorBannerSwipe
++ (instancetype)shared {
+    static YTKACESponsorBannerSwipe *shared;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{ shared = [YTKACESponsorBannerSwipe new]; });
+    return shared;
+}
+- (void)panned:(UIPanGestureRecognizer *)pan {
+    UIView *banner = pan.view;
+    CGPoint move = [pan translationInView:banner.superview];
+    CGFloat dx = move.x;
+    CGFloat dy = MAX(move.y, 0.0);
+    if (pan.state == UIGestureRecognizerStateBegan || pan.state == UIGestureRecognizerStateChanged) {
+        CGFloat distance = MAX(fabs(dx), dy);
+        banner.transform = CGAffineTransformMakeTranslation(dx, dy);
+        banner.alpha = MAX(0.2, 1.0 - distance / 160.0);
+        return;
+    }
+    if (pan.state != UIGestureRecognizerStateEnded && pan.state != UIGestureRecognizerStateCancelled) return;
+    CGPoint velocity = [pan velocityInView:banner.superview];
+    BOOL sideways = fabs(dx) > 70.0 || fabs(velocity.x) > 600.0;
+    BOOL down = dy > 30.0 || velocity.y > 400.0;
+    if (pan.state == UIGestureRecognizerStateEnded && (sideways || down)) {
+        CGAffineTransform away = sideways
+            ? CGAffineTransformMakeTranslation((dx < 0 ? -1.0 : 1.0) * banner.superview.bounds.size.width, dy)
+            : CGAffineTransformMakeTranslation(dx, dy + 120.0);
+        banner.userInteractionEnabled = NO;
+        [UIView animateWithDuration:0.22 delay:0.0 options:UIViewAnimationOptionCurveEaseOut animations:^{
+            banner.transform = away;
+            banner.alpha = 0.0;
+        } completion:^(__unused BOOL finished) {
+            [banner removeFromSuperview];
+        }];
+        return;
+    }
+    if ([objc_getAssociatedObject(banner, YTKACESponsorBannerExpired) boolValue]) {
+        YTKACEFadeOutSponsorBanner(banner);
+        return;
+    }
+    [UIView animateWithDuration:0.35 delay:0.0 usingSpringWithDamping:0.75 initialSpringVelocity:0.0
+                        options:UIViewAnimationOptionAllowUserInteraction animations:^{
+        banner.transform = CGAffineTransformIdentity;
+        banner.alpha = 1.0;
+    } completion:nil];
+}
+@end
+
+static void YTKACEAddSponsorBannerSwipe(UIView *banner) {
+    UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc]
+        initWithTarget:YTKACESponsorBannerSwipe.shared action:@selector(panned:)];
+    pan.cancelsTouchesInView = YES;
+    [banner addGestureRecognizer:pan];
 }
 
 @interface YTKACESponsorUndoTarget : NSObject
@@ -218,14 +312,8 @@ static void YTKACEShowSponsorSkippedHUD(id controller, double start, NSString *c
         target.controller = controller;
         target.startTime = start;
         target.banner = banner;
-        banner.alpha = 0.0;
-        banner.transform = CGAffineTransformMakeScale(0.96, 0.96);
-        [UIView animateWithDuration:0.25 delay:0.0
-                            options:UIViewAnimationOptionCurveEaseOut | UIViewAnimationOptionAllowUserInteraction
-                         animations:^{
-            banner.alpha = 1.0;
-            banner.transform = CGAffineTransformIdentity;
-        } completion:nil];
+        YTKACEAddSponsorBannerSwipe(banner);
+        YTKACEFadeInSponsorBanner(banner);
         NSTimeInterval duration = notificationMode == 0
             ? YTKACESponsorUnskipAlertDuration()
             : YTKACESponsorSkipAlertDuration();
@@ -285,7 +373,7 @@ static void YTKACEAskToSkipSponsor(id controller, double start, double end,
             return;
         }
         YTKACESponsorSkipTarget *target = YTKACESponsorSkipTarget.sharedTarget;
-        [target.banner removeFromSuperview];
+        YTKACEFadeOutSponsorBanner(target.banner);
         UIView *banner = [UIView new];
         banner.backgroundColor = [UIColor colorWithWhite:0.08 alpha:0.94];
         banner.layer.cornerRadius = 12.0;
@@ -326,11 +414,13 @@ static void YTKACEAskToSkipSponsor(id controller, double start, double end,
         target.endTime = end;
         target.category = category;
         target.banner = banner;
+        YTKACEAddSponsorBannerSwipe(banner);
+        YTKACEFadeInSponsorBanner(banner);
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW,
             (int64_t)(YTKACESponsorSkipAlertDuration() * NSEC_PER_SEC)),
             dispatch_get_main_queue(), ^{
                 if (target.banner == banner) {
-                    [banner removeFromSuperview];
+                    YTKACEFadeOutSponsorBanner(banner);
                 }
             });
     });

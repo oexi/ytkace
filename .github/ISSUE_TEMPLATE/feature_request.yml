@@ -1,0 +1,45 @@
+name: Feature Request
+description: Propose an idea or enhancement for YTKACE.
+title: "feat: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Share your ideas for improving YTKACE. Please ensure the suggestion fits within the tweak's scope.
+
+  - type: checkboxes
+    id: prereqs
+    attributes:
+      label: Checklist
+      options:
+        - label: I verified that this feature has not been suggested previously.
+          required: true
+
+  - type: textarea
+    id: concept
+    attributes:
+      label: Proposed Feature
+      description: Clear explanation of what capability should be added.
+      placeholder: Describe the feature in detail.
+    validations:
+      required: true
+
+  - type: textarea
+    id: purpose
+    attributes:
+      label: Motivation & Use Case (Optional)
+      description: What specific issue does this solve, or why would users benefit from this?
+      placeholder: Describe the scenario where this feature would be useful.
+    validations:
+      required: false
+
+  - type: textarea
+    id: ui-behavior
+    attributes:
+      label: Interface & Behavior Concept (Optional)
+      description: Ideas regarding tweak settings toggles, placement, or configuration menus.
+      placeholder: e.g. Add a toggle under YTKACE Settings > Video Player...
+    validations:
+      required: false

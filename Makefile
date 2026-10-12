@@ -76,6 +76,7 @@ YTKACE_FILES = \
 	Tweak/Features/Gestures/PlayerGestures.mm \
 	Tweak/Features/Interface/OverlayVisibilityHooks.mm \
 	Tweak/Features/Interface/ContentVisibilityHooks.mm \
+	Tweak/Features/Interface/AiSList.mm \
 	Tweak/Features/Interface/MiscellaneousHooks.mm \
 	Tweak/Features/Interface/CopyCommentHooks.mm \
 	Tweak/Features/Interface/ProfilePictureViewer.mm \
@@ -112,6 +113,6 @@ after-all::
 	@cp "$(THEOS_OBJ_DIR)/YTKACE.dylib" "$(THEOS_PROJECT_DIR)/dist/YTKACE.dylib"
 
 after-stage::
-	@mkdir -p "$(THEOS_STAGING_DIR)/Library/MobileSubstrate/DynamicLibraries"
-	@cp -R "$(THEOS_PROJECT_DIR)/Resources/YTKACE.bundle" "$(THEOS_STAGING_DIR)/Library/MobileSubstrate/DynamicLibraries/YTKACE.bundle"
+	@mkdir -p "$(THEOS_STAGING_DIR)/Library/MobileSubstrate/DynamicLibraries" "$(THEOS_STAGING_DIR)/Library/Application Support"
+	@cp -R "$(THEOS_PROJECT_DIR)/Resources/YTKACE.bundle" "$(THEOS_STAGING_DIR)/Library/Application Support/YTKACE.bundle"
 	@cp "$(THEOS_PROJECT_DIR)/YTKACE.plist" "$(THEOS_STAGING_DIR)/Library/MobileSubstrate/DynamicLibraries/YTKACE.plist"
