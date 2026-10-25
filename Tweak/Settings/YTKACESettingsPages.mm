@@ -53,6 +53,19 @@ static NSDictionary *YTKACEWithFooter(NSDictionary *item, NSString *footer) {
     return copy;
 }
 
+static NSDictionary *YTKACEInput(NSString *title, NSString *subtitle, NSString *key, NSString *placeholder) {
+    return @{
+        @"type": @"input",
+        @"title": YTKACELocalized(title),
+        @"en": title,
+        @"subtitle": YTKACELocalized(subtitle ?: @""),
+        @"key": key,
+        @"placeholder": YTKACELocalized(placeholder ?: @""),
+        @"asset": @"",
+        @"symbol": @""
+    };
+}
+
 static NSDictionary *YTKACEToggleDetail(NSString *title,
                                          NSString *subtitle,
                                          NSString *key) {
@@ -325,6 +338,7 @@ BOOL YTKACEPreferenceNeedsRestart(NSString *key) {
         @"YTKACE.Preference.Playback.LegacyQualityMenu",
         @"YTKACE.Preference.Navigation.StatusBarHidden",
         @"YTKACE.Preference.Tabs.Glass",
+        @"YTKACE.Preference.Tabs.GlassMode",
         @"YTKACE.Preference.Glass.TopBar",
         @"YTKACE.Preference.Glass.Menus",
         @"YTKACE.Preference.Glass.Notices",
@@ -902,6 +916,18 @@ willDisplayHeaderView:(UIView *)view
             cell.accessoryView = value;
         }
         cell.accessoryType = UITableViewCellAccessoryNone;
+    } else if ([type isEqualToString:@"input"]) {
+        id stored = YTKACEPreferenceObject(item[@"key"]);
+        UILabel *value = [UILabel new];
+        value.text = [stored isKindOfClass:NSString.class] && [stored length] != 0 ? stored : item[@"placeholder"];
+        value.font = [UIFont systemFontOfSize:15.0];
+        value.textColor = YTKACEAccentColor();
+        value.textAlignment = NSTextAlignmentRight;
+        [value sizeToFit];
+        if (CGRectGetWidth(value.frame) > 160.0) value.frame = CGRectMake(0.0, 0.0, 160.0, CGRectGetHeight(value.frame));
+        value.lineBreakMode = NSLineBreakByTruncatingTail;
+        cell.accessoryView = value;
+        cell.accessoryType = UITableViewCellAccessoryNone;
     } else if ([type isEqualToString:@"color"]) {
         NSString *stored = YTKACEPreferenceObject(item[@"key"]);
         UIColor *color = YTKACEColorFromHex(
@@ -1005,6 +1031,28 @@ willDisplayHeaderView:(UIView *)view
     } else if ([type isEqualToString:@"action"]) {
         YTKACEAction action = item[@"action"];
         action(self);
+    } else if ([type isEqualToString:@"input"]) {
+        UIAlertController *alert = [UIAlertController alertControllerWithTitle:item[@"title"]
+                                                                       message:item[@"subtitle"]
+                                                                preferredStyle:UIAlertControllerStyleAlert];
+        [alert addTextFieldWithConfigurationHandler:^(UITextField *field) {
+            id stored = YTKACEPreferenceObject(item[@"key"]);
+            field.text = [stored isKindOfClass:NSString.class] ? stored : @"";
+            field.placeholder = item[@"placeholder"];
+            field.autocorrectionType = UITextAutocorrectionTypeNo;
+            field.clearButtonMode = UITextFieldViewModeWhileEditing;
+        }];
+        [alert addAction:[UIAlertAction actionWithTitle:YTKACELocalized(@"Cancel")
+                                                  style:UIAlertActionStyleCancel handler:nil]];
+        __weak UIAlertController *weakAlert = alert;
+        [alert addAction:[UIAlertAction actionWithTitle:YTKACELocalized(@"Save") style:UIAlertActionStyleDefault
+                                                handler:^(__unused UIAlertAction *action) {
+            NSString *text = [weakAlert.textFields.firstObject.text
+                stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+            YTKACESetPreferenceObject(item[@"key"], text ?: @"");
+            [self.tableView reloadRowsAtIndexPaths:@[indexPath] withRowAnimation:UITableViewRowAnimationNone];
+        }]];
+        [self presentViewController:alert animated:YES completion:nil];
     } else if ([type isEqualToString:@"color"]) {
         NSString *stored = YTKACEPreferenceObject(item[@"key"]);
         UIColorPickerViewController *picker = [UIColorPickerViewController new];
@@ -1398,6 +1446,9 @@ static NSDictionary *YTKACESponsorBlockDefinition(void) {
         YTKACEToggleDetail(@"SponsorBlock",
                            @"Skip or mark video segments. Set each category below.",
                            YTKACESponsorBlockKey),
+        YTKACEToggleDetail(@"Player Button",
+                           @"Adds a shield to the player to whitelist channels, vote on segments and submit new ones.",
+                           @"YTKACE.Preference.SponsorBlock.OverlayButton"),
         YTKACEPickerDetail(@"Skip Notice", @"Shown after a segment is skipped.",
                      @"YTKACE.Preference.SponsorBlock.NotificationMode",
                      @[@"With Unskip", @"Text Only", @"Off"],
@@ -1650,9 +1701,18 @@ static NSDictionary *YTKACEFeedDefinition(void) {
         ],
         @[
             YTKACEToggle(@"Remove Shorts Shelves", @"YTKACE.Preference.Shorts.FeedHidden", @"", @""),
+            YTKACEToggleDetail(@"Keep Shorts in Home",
+                @"Still show Shorts on the Home feed when shelves are removed.",
+                @"YTKACE.Preference.Shorts.HomeKept"),
             YTKACEToggleDetail(@"Keep Shorts in Subscriptions",
                 @"Still show Shorts in the Subscriptions feed when shelves are removed.",
                 @"YTKACE.Preference.Shorts.SubscriptionsKept"),
+            YTKACEToggleDetail(@"Keep Shorts in Search",
+                @"Still show Shorts in search results when shelves are removed.",
+                @"YTKACE.Preference.Shorts.SearchKept"),
+            YTKACEToggleDetail(@"Keep Shorts on Channels",
+                @"Still show Shorts on channel pages when shelves are removed.",
+                @"YTKACE.Preference.Shorts.ChannelsKept"),
             YTKACEToggleDetail(@"Remove Horizontal Shelves",
                                @"Removes horizontal shelves like Watch again from the feed.",
                                @"YTKACE.Preference.Feed.HorizontalShelvesHidden"),
@@ -1667,15 +1727,34 @@ static NSDictionary *YTKACEFeedDefinition(void) {
                                @"YTKACE.Preference.Feed.PlayablesHidden")
         ],
         @[
+            YTKACEToggle(@"Remove Play on Different Device", @"YTKACE.Preference.Menu.CastHidden", @"", @""),
+            YTKACEToggle(@"Remove Play Next in Queue", @"YTKACE.Preference.Menu.PlayNextHidden", @"", @""),
+            YTKACEToggle(@"Remove Play Last in Queue", @"YTKACE.Preference.Menu.PlayLastHidden", @"", @""),
+            YTKACEToggle(@"Remove Save to Watch Later", @"YTKACE.Preference.Menu.WatchLaterHidden", @"", @""),
+            YTKACEToggle(@"Remove Save to Playlist", @"YTKACE.Preference.Menu.SaveHidden", @"", @""),
+            YTKACEToggleDetail(@"Remove Download", @"Also removes YTKACE's download from this menu.",
+                               @"YTKACE.Preference.Menu.DownloadHidden"),
+            YTKACEToggle(@"Remove Share", @"YTKACE.Preference.Menu.ShareHidden", @"", @""),
+            YTKACEToggle(@"Remove Not Interested", @"YTKACE.Preference.Menu.NotInterestedHidden", @"", @""),
+            YTKACEToggle(@"Remove Don't Recommend Channel", @"YTKACE.Preference.Menu.DontRecommendHidden", @"", @""),
+            YTKACEToggle(@"Remove Report", @"YTKACE.Preference.Menu.ReportHidden", @"", @"")
+        ],
+        @[
             YTKACEToggleDetail(@"Hide AI Channels",
                                @"Hides videos from channels on the AiSList blocklist.",
                                @"YTKACE.Preference.Feed.AIChannelsHidden"),
-            YTKACEWithFooter(YTKACEToggleDetail(@"Hide Suspected AI Channels",
+            YTKACEToggleDetail(@"Hide Suspected AI Channels",
                                @"Also hides channels on the AiSList warnlist.",
                                @"YTKACE.Preference.Feed.SuspectedAIChannelsHidden"),
+            YTKACEToggleDetail(@"Report AI Channels",
+                               @"Adds Report AI Channel to the ⋯ menu of videos.",
+                               @"YTKACE.Preference.Feed.AIChannelReporting"),
+            YTKACEWithFooter(YTKACEInput(@"Report Name", @"Sent with your reports to AiSList.",
+                                         @"YTKACE.Preference.Feed.AIReportName", @"YTKACE"),
                              @"List from aisloplist.com, updates automatically.")
         ]
-    ], @[YTKACELocalized(@"HOME"), YTKACELocalized(@"FEED"), YTKACELocalized(@"AI CHANNELS")]);
+    ], @[YTKACELocalized(@"HOME"), YTKACELocalized(@"FEED"), YTKACELocalized(@"VIDEO MENU"),
+          YTKACELocalized(@"AI CHANNELS")]);
 }
 
 static NSDictionary *YTKACEShortsOptionsDefinition(void) {
@@ -1746,7 +1825,10 @@ static NSDictionary *YTKACETopBarDefinition(void) {
 static NSDictionary *YTKACEGlassOptionsDefinition(void) {
     return YTKACEPageDefinition(@"glass", @"Liquid Glass", @[
         @[
-            YTKACEToggle(@"Tab Bar", @"YTKACE.Preference.Tabs.Glass", @"", @""),
+            YTKACEPickerDetail(@"Tab Bar", @"Default leaves YouTube's own tab bar as is.",
+                               @"YTKACE.Preference.Tabs.GlassMode",
+                               @[@"Default", @"YTKACE", @"YouTube", @"Off"], @[@0, @1, @2, @3],
+                               YTKACETabBarOwnGlass() ? 1 : 0),
             YTKACEToggle(@"Top Bar Buttons", @"YTKACE.Preference.Glass.TopBar", @"", @""),
             YTKACEToggle(@"Menus and Sheets", @"YTKACE.Preference.Glass.Menus", @"", @""),
             YTKACEToggle(@"YTKACE Toasts and Popups", @"YTKACE.Preference.Glass.Notices", @"", @""),
@@ -1798,6 +1880,9 @@ static NSDictionary *YTKACEGeneralDefinition(void) {
             YTKACEToggleDetail(@"Share at Current Time",
                                @"Links shared from the iOS share sheet start where you are in the video.",
                                @"YTKACE.Preference.Sharing.Timestamp"),
+            YTKACEToggleDetail(@"Clean Copied Links",
+                               @"Removes tracking like si= from links you copy or share.",
+                               @"YTKACE.Preference.Sharing.CleanLinks"),
             YTKACEToggle(@"Hold Avatar to Enlarge", @"YTKACE.Preference.Profiles.Preview", @"", @""),
             YTKACEToggleDetail(@"Save Post Images",
                 @"Adds a save button when you open an image from a community post.",

@@ -569,6 +569,7 @@ static void YTKACECollectPlaylistJSON(id node, NSMutableArray<NSDictionary *> *i
 }
 
 extern id YTKACELatestPlayerAuthorization;
+extern NSString *YTKACEPlayerOnBehalfOfUser(void);
 static id YTKACERequestAuthorization;
 static IMP OriginalAuthorizeCompletion;
 static IMP OriginalAuthorizeCallback;
@@ -621,6 +622,7 @@ static NSArray<NSDictionary *> *YTKACEFetchPlaylistPages(NSString *playlistID, N
     NSMutableSet<NSString *> *tried = [NSMutableSet set];
     NSUInteger empty = 0;
     NSString *visitor = nil;
+    NSString *pageID = authHeader.length != 0 ? YTKACEPlayerOnBehalfOfUser() : nil;
     NSString *version = [NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"] ?: @"21.40.5";
     NSString *agent = [NSString stringWithFormat:
         @"com.google.ios.youtube/%@ (iPhone16,2; U; CPU iOS 18_6 like Mac OS X; en_US)", version];
@@ -633,7 +635,9 @@ static NSArray<NSDictionary *> *YTKACEFetchPlaylistPages(NSString *playlistID, N
         NSMutableDictionary *client = [@{@"clientName": @"IOS", @"clientVersion": version, @"deviceMake": @"Apple",
             @"deviceModel": @"iPhone16,2", @"osName": @"iPhone", @"osVersion": @"18.6", @"hl": @"en", @"gl": @"US"} mutableCopy];
         if (visitor.length != 0) client[@"visitorData"] = visitor;
-        NSMutableDictionary *body = [@{@"context": @{@"client": client}} mutableCopy];
+        NSMutableDictionary *context = [@{@"client": client} mutableCopy];
+        if (authHeader.length != 0 && pageID.length != 0) context[@"user"] = @{@"onBehalfOfUser": pageID};
+        NSMutableDictionary *body = [@{@"context": context} mutableCopy];
         if (page == 0) body[@"browseId"] = [playlistID hasPrefix:@"VL"] ? playlistID : [@"VL" stringByAppendingString:playlistID];
         else body[@"continuation"] = continuation;
         NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:
@@ -646,6 +650,7 @@ static NSArray<NSDictionary *> *YTKACEFetchPlaylistPages(NSString *playlistID, N
         [request setValue:version forHTTPHeaderField:@"X-Youtube-Client-Version"];
         if (visitor.length != 0) [request setValue:visitor forHTTPHeaderField:@"X-Goog-Visitor-Id"];
         if (authHeader.length != 0) [request setValue:authHeader forHTTPHeaderField:@"Authorization"];
+        if (authHeader.length != 0 && pageID.length != 0) [request setValue:pageID forHTTPHeaderField:@"X-Goog-PageId"];
         request.HTTPBody = [NSJSONSerialization dataWithJSONObject:body options:0 error:nil];
         dispatch_semaphore_t done = dispatch_semaphore_create(0);
         __block NSData *data = nil;
@@ -710,9 +715,9 @@ static void YTKACEFetchFullPlaylist(NSString *playlistID, void (^completion)(NSA
         NSArray<NSDictionary *> *items = personal ? @[] : YTKACEFetchPlaylistPages(playlistID, nil, &pages);
         if (items.count == 0) {
             NSString *header = YTKACEPlaylistAuthHeader();
-            YTKACEDebugLog(@"playlist", @"auth personal=%d header=%d player=%d request=%d", personal,
+            YTKACEDebugLog(@"playlist", @"auth personal=%d header=%d player=%d request=%d page=%d", personal,
                               header.length != 0, YTKACELatestPlayerAuthorization != nil,
-                              YTKACERequestAuthorization != nil);
+                              YTKACERequestAuthorization != nil, YTKACEPlayerOnBehalfOfUser().length != 0);
             if (header.length != 0) items = YTKACEFetchPlaylistPages(playlistID, header, &pages);
             else YTKACEDownloadLog(@"playlist", @"no auth header player=%d request=%d",
                                    YTKACELatestPlayerAuthorization != nil, YTKACERequestAuthorization != nil);

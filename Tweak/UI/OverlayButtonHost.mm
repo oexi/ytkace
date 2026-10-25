@@ -392,7 +392,19 @@ static UIViewController *YTKACESheetPresenter(UIView *sourceView) {
         }
         responder = responder.nextResponder;
     }
-    return nil;
+    UIWindow *window = nil;
+    for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
+        if (![scene isKindOfClass:UIWindowScene.class] ||
+            scene.activationState != UISceneActivationStateForegroundActive) continue;
+        for (UIWindow *candidate in ((UIWindowScene *)scene).windows) {
+            if (candidate.isKeyWindow) window = candidate;
+        }
+    }
+    UIViewController *top = window.rootViewController;
+    while (top.presentedViewController != nil && !top.presentedViewController.isBeingDismissed) {
+        top = top.presentedViewController;
+    }
+    return top;
 }
 
 id YTKACEMakeSheet(NSString *title, NSString *subtitle) {
@@ -445,10 +457,20 @@ void YTKACEPresentNativeSheet(NSString *title,
         NSString *value = item[@"value"];
         NSString *subtitle = item[@"subtitle"];
         id action = nil;
-        if ([actionClass respondsToSelector:makeSelectable]) {
+        BOOL checked = [item[@"check"] boolValue];
+        if ((checked || value.length != 0) && [actionClass respondsToSelector:makeValued]) {
+            action = ((id (*)(id, SEL, id, id, id, id, id))objc_msgSend)(
+                actionClass, makeValued, item[@"title"], value ?: @"", item[@"icon"], nil, handler);
+            UIImage *mark = checked ? (secondary ?: [[UIImage systemImageNamed:@"checkmark"]
+                imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate]) : secondary;
+            SEL setSecondary = NSSelectorFromString(@"setSecondaryIconImage:");
+            if (mark != nil && [action respondsToSelector:setSecondary]) {
+                ((void (*)(id, SEL, id))objc_msgSend)(action, setSecondary, mark);
+            }
+        } else if ([actionClass respondsToSelector:makeSelectable]) {
             action = ((id (*)(id, SEL, id, id, id, BOOL, id, id, id))objc_msgSend)(
                 actionClass, makeSelectable, item[@"title"], subtitle,
-                item[@"icon"], NO, nil, nil, handler);
+                item[@"icon"], [item[@"selected"] boolValue], nil, nil, handler);
         } else if (subtitle.length != 0 &&
                    [actionClass respondsToSelector:makeSubtitled]) {
             action = ((id (*)(id, SEL, id, id, id, id, id))objc_msgSend)(

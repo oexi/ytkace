@@ -7,6 +7,7 @@
 #import "../../Runtime/Localization.h"
 #import "../Downloads/DownloadLog.h"
 #import "../../UI/Assets.h"
+#import "../Interface/AiSList.h"
 
 #import <QuartzCore/QuartzCore.h>
 #import <AudioToolbox/AudioToolbox.h>
@@ -29,6 +30,9 @@ static const void *YTKACESponsorRenderedSegmentsAssociation = &YTKACESponsorRend
 static const void *YTKACESponsorMarkerBoundsAssociation = &YTKACESponsorMarkerBoundsAssociation;
 static const void *YTKACESponsorMarkerDurationAssociation = &YTKACESponsorMarkerDurationAssociation;
 static __weak id YTKACECurrentSponsorController;
+static const void *YTKACESponsorWhitelistedAssociation = &YTKACESponsorWhitelistedAssociation;
+static const void *YTKACESponsorHandleAssociation = &YTKACESponsorHandleAssociation;
+static NSString * const YTKACESponsorWhitelistKey = @"YTKACE.Preference.SponsorBlock.Whitelist";
 static NSHashTable<UIView *> *YTKACESponsorBars;
 static BOOL YTKACESponsorTimeUpdatesEnabled;
 static BOOL YTKACEPlaybackTimeNotificationsNeeded;
@@ -430,6 +434,9 @@ static void YTKACEEvaluateSponsorTime(id controller, double time) {
     if (!YTKACESponsorBlockEnabled()) {
         return;
     }
+    if ([objc_getAssociatedObject(controller, YTKACESponsorWhitelistedAssociation) boolValue]) {
+        return;
+    }
 
     NSArray<NSDictionary<NSString *, id> *> *segments =
         objc_getAssociatedObject(controller, YTKACESponsorSegmentsAssociation);
@@ -468,6 +475,45 @@ static void YTKACEEvaluateSponsorTime(id controller, double time) {
 }
 
 static __weak id YTKACELastPlayerController;
+
+id YTKACESponsorActiveController(void) {
+    return YTKACELastPlayerController;
+}
+
+NSString *YTKACESponsorActiveVideoID(void) {
+    return objc_getAssociatedObject(YTKACELastPlayerController, YTKACESponsorVideoAssociation);
+}
+
+NSArray *YTKACESponsorActiveSegments(void) {
+    id segments = objc_getAssociatedObject(YTKACELastPlayerController, YTKACESponsorSegmentsAssociation);
+    return [segments isKindOfClass:NSArray.class] ? segments : @[];
+}
+
+double YTKACESponsorActiveTime(void) {
+    return YTKACEDoubleMessage(YTKACELastPlayerController, @[@"currentVideoMediaTime"]);
+}
+
+double YTKACESponsorActiveDuration(void) {
+    return YTKACEDoubleMessage(YTKACELastPlayerController, @[@"currentVideoTotalMediaTime",
+                                                            @"currentVideoDuration", @"totalMediaTime"]);
+}
+
+void YTKACESponsorSeekActive(double time) {
+    YTKACESeekToTime(YTKACELastPlayerController, time);
+}
+
+NSString *YTKACESponsorActiveHandle(void) {
+    return objc_getAssociatedObject(YTKACELastPlayerController, YTKACESponsorHandleAssociation);
+}
+
+void YTKACESponsorSetActiveHandle(NSString *handle) {
+    id controller = YTKACELastPlayerController;
+    if (controller == nil || handle.length == 0) return;
+    objc_setAssociatedObject(controller, YTKACESponsorHandleAssociation, handle, OBJC_ASSOCIATION_COPY_NONATOMIC);
+    NSArray *whitelist = [NSUserDefaults.standardUserDefaults arrayForKey:YTKACESponsorWhitelistKey];
+    objc_setAssociatedObject(controller, YTKACESponsorWhitelistedAssociation,
+                             @([whitelist containsObject:handle.lowercaseString]), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+}
 
 void YTKACEPauseYouTubePlayer(void) {
     id controller = YTKACELastPlayerController;
@@ -520,6 +566,23 @@ static void YTKACEDidActivateVideo(id receiver,
                              [NSMutableSet set],
                              OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     YTKACECurrentSponsorController = receiver;
+    objc_setAssociatedObject(receiver, YTKACESponsorWhitelistedAssociation, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    objc_setAssociatedObject(receiver, YTKACESponsorHandleAssociation, nil, OBJC_ASSOCIATION_COPY_NONATOMIC);
+    NSArray *whitelist = [NSUserDefaults.standardUserDefaults arrayForKey:YTKACESponsorWhitelistKey];
+    if (whitelist.count != 0) {
+        __weak id weakController = receiver;
+        YTKACELookupChannelHandle(videoID, ^(NSString *handle, __unused NSString *channel, __unused NSString *title) {
+            id strongController = weakController;
+            NSString *current = objc_getAssociatedObject(strongController, YTKACESponsorVideoAssociation);
+            if (strongController == nil || ![current isEqualToString:videoID] || handle.length == 0) return;
+            objc_setAssociatedObject(strongController, YTKACESponsorHandleAssociation, handle,
+                                     OBJC_ASSOCIATION_COPY_NONATOMIC);
+            BOOL listed = [whitelist containsObject:handle.lowercaseString];
+            objc_setAssociatedObject(strongController, YTKACESponsorWhitelistedAssociation, @(listed),
+                                     OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+            YTKACEDebugLog(@"sponsor", @"whitelist check %@ listed=%d", handle, listed);
+        });
+    }
 
     __weak id weakReceiver = receiver;
     [YTKACESponsorClient.sharedClient segmentsForVideoID:videoID

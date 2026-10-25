@@ -1088,7 +1088,10 @@ static BOOL YTKACEChildClassContains(id section, NSArray<NSString *> *needles) {
 static const NSUInteger YTKACEFeedChildScanLimit = 64;
 
 static _Atomic BOOL YTKACEFeedHideShorts = NO;
+static _Atomic BOOL YTKACEFeedKeepHomeShorts = NO;
 static _Atomic BOOL YTKACEFeedKeepSubsShorts = NO;
+static _Atomic BOOL YTKACEFeedKeepSearchShorts = NO;
+static _Atomic BOOL YTKACEFeedKeepChannelShorts = NO;
 static _Atomic BOOL YTKACEFeedHideProducts = NO;
 static _Atomic BOOL YTKACEFeedHideCommunity = NO;
 static _Atomic BOOL YTKACEFeedHideHorizontalShelves = NO;
@@ -1136,8 +1139,14 @@ static void YTKACEFeedRefreshFlags(void) {
         YTKACEFeatureEnabled(@"YTKACE.Preference.Shorts.PauseCardHidden") ||
         YTKACEFeatureEnabled(@"YTKACE.Preference.Shorts.StickerAdsHidden"));
     atomic_store(&YTKACEFeedHideShorts, hideShorts);
+    atomic_store(&YTKACEFeedKeepHomeShorts,
+        YTKACEFeatureEnabled(@"YTKACE.Preference.Shorts.HomeKept"));
     atomic_store(&YTKACEFeedKeepSubsShorts,
         YTKACEFeatureEnabled(@"YTKACE.Preference.Shorts.SubscriptionsKept"));
+    atomic_store(&YTKACEFeedKeepSearchShorts,
+        YTKACEFeatureEnabled(@"YTKACE.Preference.Shorts.SearchKept"));
+    atomic_store(&YTKACEFeedKeepChannelShorts,
+        YTKACEFeatureEnabled(@"YTKACE.Preference.Shorts.ChannelsKept"));
     atomic_store(&YTKACEFeedHideProducts, hideProducts);
     atomic_store(&YTKACEFeedHideCommunity, hideCommunity);
     atomic_store(&YTKACEFeedHideHorizontalShelves, hideHorizontalShelves);
@@ -1195,7 +1204,6 @@ static SEL YTKACESelHasReelItemRenderer;
 static SEL YTKACESelHasMerchShelfRenderer;
 static SEL YTKACESelHasMerchItemRenderer;
 static SEL YTKACESelHasCommunity[5];
-static SEL YTKACESelHasMix[6];
 static SEL YTKACESelHasGame[2];
 static SEL YTKACEFeedContainerSels[8];
 
@@ -1227,12 +1235,6 @@ static void YTKACEFeedInitSels(void) {
         YTKACESelHasCommunity[3] = @selector(hasPostsContainerRenderer);
         YTKACESelHasCommunity[4] =
             @selector(hasChannelPostBulletinRenderer);
-        YTKACESelHasMix[0] = @selector(hasAutomixPreviewVideoRenderer);
-        YTKACESelHasMix[1] = @selector(hasAutomixPlaylistVideoRenderer);
-        YTKACESelHasMix[2] = @selector(hasRadioRenderer);
-        YTKACESelHasMix[3] = @selector(hasPivotRadioRenderer);
-        YTKACESelHasMix[4] = @selector(hasRadioAutomixPlaylistId);
-        YTKACESelHasMix[5] = @selector(hasRadioPlaylistMixPlaylistId);
         YTKACESelHasGame[0] = @selector(hasGameCardRenderer);
         YTKACESelHasGame[1] = @selector(hasGameDetailsRenderer);
         YTKACEFeedContainerSels[0] = YTKACESelContentsArray;
@@ -1337,9 +1339,8 @@ typedef NS_OPTIONS(NSUInteger, YTKACEFeedKind) {
     YTKACEFeedKindShorts    = 1 << 0,
     YTKACEFeedKindProducts  = 1 << 1,
     YTKACEFeedKindCommunity = 1 << 2,
-    YTKACEFeedKindMix       = 1 << 3,
-    YTKACEFeedKindPlayable  = 1 << 4,
-    YTKACEFeedKindHorizontalShelves = 1 << 5,
+    YTKACEFeedKindPlayable  = 1 << 3,
+    YTKACEFeedKindHorizontalShelves = 1 << 4,
 };
 
 static NSArray<NSString *> *YTKACEShortsClasses(void) {
@@ -1386,21 +1387,6 @@ static NSArray<NSString *> *YTKACECommunityIdentifiers(void) {
     static dispatch_once_t t;
     dispatch_once(&t, ^{ v = @[@"community_post", @"communitypost",
         @"backstage"]; });
-    return v;
-}
-static NSArray<NSString *> *YTKACEMixClasses(void) {
-    static NSArray<NSString *> *v;
-    static dispatch_once_t t;
-    dispatch_once(&t, ^{ v = @[@"automixpreviewvideorenderer",
-        @"automixplaylistvideorenderer", @"mixradiorenderer",
-        @"radiorenderer", @"feednudgerenderer"]; });
-    return v;
-}
-static NSArray<NSString *> *YTKACEMixIdentifiers(void) {
-    static NSArray<NSString *> *v;
-    static dispatch_once_t t;
-    dispatch_once(&t, ^{ v = @[@"automix", @"radio_playlist_mix",
-        @"feed_nudge"]; });
     return v;
 }
 static NSArray<NSString *> *YTKACEPlayableClasses(void) {
@@ -1468,13 +1454,6 @@ static inline YTKACEFeedKind YTKACEFeedKindForNode(id node,
             YTKACEFastIdentifierMatches(node,
                                         YTKACECommunityIdentifiers())) {
             found |= YTKACEFeedKindCommunity;
-        }
-    }
-    if ((wanted & YTKACEFeedKindMix) && !(found & YTKACEFeedKindMix)) {
-        if (YTKACEFastEntryMatchesSel(node, YTKACESelHasMix, 6,
-                                      YTKACEMixClasses()) ||
-            YTKACEFastIdentifierMatches(node, YTKACEMixIdentifiers())) {
-            found |= YTKACEFeedKindMix;
         }
     }
     if ((wanted & YTKACEFeedKindPlayable) &&
@@ -1714,9 +1693,7 @@ static NSArray<NSString *> *YTKACEMixBytesMarkers(void) {
     static NSArray<NSString *> *v;
     static dispatch_once_t t;
     dispatch_once(&t, ^{ v = @[
-        @"feed_nudge_view", @"feed_nudge",
-        @"radioautomixplaylistid", @"radioplaylistmixplaylistid",
-        @"radio_playlist_mix"
+        @"&list=RD"
     ]; });
     return v;
 }
@@ -1787,10 +1764,6 @@ static YTKACEFeedKind YTKACEFeedKindForSection(id section,
                 YTKACEBytesContain(bytes, YTKACECommunityBytesMarkers())) {
                 structural |= YTKACEFeedKindCommunity;
             }
-            if ((missing & YTKACEFeedKindMix) &&
-                YTKACEBytesContain(bytes, YTKACEMixBytesMarkers())) {
-                structural |= YTKACEFeedKindMix;
-            }
             if ((missing & YTKACEFeedKindPlayable) &&
                 YTKACEBytesContain(bytes, YTKACEPlayableBytesMarkers())) {
                 structural |= YTKACEFeedKindPlayable;
@@ -1813,29 +1786,142 @@ static YTKACEFeedKind YTKACEFeedKindForSection(id section,
 
 static BOOL YTKACEIsGuidelinesSection(id section);
 
-static BOOL YTKACEKeepsShortsInFeed(id receiver) {
+typedef NS_ENUM(NSUInteger, YTKACEFeedSurface) {
+    YTKACEFeedSurfaceUnknown = 0,
+    YTKACEFeedSurfaceHome,
+    YTKACEFeedSurfaceSubscriptions,
+    YTKACEFeedSurfaceSearch,
+    YTKACEFeedSurfaceChannel,
+};
+
+static NSString *YTKACEBrowseID(id object) {
+    if (object == nil) return nil;
     static SEL browseSel;
     if (browseSel == NULL) browseSel = NSSelectorFromString(@"browseID");
-    if (![receiver respondsToSelector:browseSel]) return NO;
-    id browseID = ((id (*)(id, SEL))objc_msgSend)(receiver, browseSel);
-    if (![browseID isKindOfClass:NSString.class]) return NO;
-    if ([browseID isEqualToString:@"FEsubscriptions"]) {
-        return atomic_load(&YTKACEFeedKeepSubsShorts);
+    static SEL identifierSel;
+    if (identifierSel == NULL) {
+        identifierSel = NSSelectorFromString(@"browseIdentifier");
     }
+    for (NSUInteger index = 0; index < 2; index++) {
+        SEL selector = index == 0 ? browseSel : identifierSel;
+        if (selector == NULL || ![object respondsToSelector:selector]) continue;
+        id value = ((id (*)(id, SEL))objc_msgSend)(object, selector);
+        if ([value isKindOfClass:NSString.class] && ((NSString *)value).length != 0) {
+            return (NSString *)value;
+        }
+    }
+    return nil;
+}
+
+static BOOL YTKACEIsChannelBrowseID(NSString *browseID) {
+    if ([browseID hasPrefix:@"UC"] || [browseID hasPrefix:@"@"]) return YES;
+    NSRange slash = [browseID rangeOfString:@"/" options:NSBackwardsSearch];
+    if (slash.location == NSNotFound) return NO;
+    static NSSet<NSString *> *tabs;
+    if (tabs == nil) {
+        tabs = [NSSet setWithArray:@[@"videos", @"shorts", @"streams", @"live",
+            @"community", @"playlists", @"featured", @"home"]];
+    }
+    NSString *tab = [[browseID substringFromIndex:slash.location + 1]
+        lowercaseString];
+    return [tabs containsObject:tab];
+}
+
+static YTKACEFeedSurface YTKACESurfaceForBrowseID(NSString *browseID) {
+    if (browseID.length == 0) return YTKACEFeedSurfaceUnknown;
+    if ([browseID isEqualToString:@"FEwhat_to_watch"]) {
+        return YTKACEFeedSurfaceHome;
+    }
+    if ([browseID isEqualToString:@"FEsubscriptions"]) {
+        return YTKACEFeedSurfaceSubscriptions;
+    }
+    if (YTKACEIsChannelBrowseID(browseID)) {
+        return YTKACEFeedSurfaceChannel;
+    }
+    return YTKACEFeedSurfaceUnknown;
+}
+
+static id YTKACESurfaceAncestor(id receiver, NSString *className) {
+    if (receiver == nil || className.length == 0) return nil;
+    Class cls = NSClassFromString(className);
+    if (cls == Nil) return nil;
+    SEL parentSel = NSSelectorFromString(@"parentViewController");
+    id walk = receiver;
+    for (NSUInteger depth = 0; walk != nil && depth < 12; depth++) {
+        if ([walk isKindOfClass:cls]) return walk;
+        id parent = [walk respondsToSelector:parentSel]
+            ? ((id (*)(id, SEL))objc_msgSend)(walk, parentSel) : nil;
+        if (parent == nil && [walk isKindOfClass:UIResponder.class]) {
+            parent = ((UIResponder *)walk).nextResponder;
+        }
+        if (parent == walk) break;
+        walk = parent;
+    }
+    return nil;
+}
+
+static const void *YTKACEFeedSurfaceAssociation = &YTKACEFeedSurfaceAssociation;
+
+static YTKACEFeedSurface YTKACEShortsSurface(id receiver) {
+    if (receiver == nil) return YTKACEFeedSurfaceUnknown;
+    NSNumber *memo = objc_getAssociatedObject(receiver, YTKACEFeedSurfaceAssociation);
+    if (memo != nil) return (YTKACEFeedSurface)memo.unsignedIntegerValue;
+
+    YTKACEFeedSurface surface = YTKACESurfaceForBrowseID(YTKACEBrowseID(receiver));
+    if (surface == YTKACEFeedSurfaceUnknown) {
+        if (YTKACESurfaceAncestor(receiver, @"YTSearchResultsViewController") != nil) {
+            surface = YTKACEFeedSurfaceSearch;
+        }
+    }
+    if (surface == YTKACEFeedSurfaceUnknown) {
+        surface = YTKACESurfaceForBrowseID(
+            YTKACEBrowseID(YTKACESurfaceAncestor(receiver, @"YTBrowseViewController")));
+    }
+    if (surface != YTKACEFeedSurfaceUnknown) {
+        objc_setAssociatedObject(receiver, YTKACEFeedSurfaceAssociation,
+                                 @(surface), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+    return surface;
+}
+
+static BOOL YTKACEKeepsShortsInFeed(id receiver) {
+    NSString *browseID = YTKACEBrowseID(receiver);
     static NSSet<NSString *> *personal;
-    if (personal == nil) personal = [NSSet setWithArray:@[@"FEhistory", @"FElibrary", @"FEplaylist_aggregation"]];
-    return [personal containsObject:browseID];
+    if (personal == nil) {
+        personal = [NSSet setWithArray:@[@"FEhistory", @"FElibrary",
+            @"FEplaylist_aggregation"]];
+    }
+    if ([personal containsObject:browseID]) return YES;
+    YTKACEFeedSurface surface = YTKACEShortsSurface(receiver);
+    BOOL keep = NO;
+    switch (surface) {
+        case YTKACEFeedSurfaceHome:
+            keep = atomic_load(&YTKACEFeedKeepHomeShorts);
+            break;
+        case YTKACEFeedSurfaceSubscriptions:
+            keep = atomic_load(&YTKACEFeedKeepSubsShorts);
+            break;
+        case YTKACEFeedSurfaceSearch:
+            keep = atomic_load(&YTKACEFeedKeepSearchShorts);
+            break;
+        case YTKACEFeedSurfaceChannel:
+            keep = atomic_load(&YTKACEFeedKeepChannelShorts);
+            break;
+        case YTKACEFeedSurfaceUnknown:
+            break;
+    }
+    static NSString *const names[] = { @"unknown", @"home", @"subscriptions",
+        @"search", @"channel" };
+    YTKACEDebugLog(@"shorts", @"surface=%@ browse=%@ keep=%@ class=%@",
+        names[surface], browseID.length == 0 ? @"-" : browseID,
+        keep ? @"yes" : @"no", NSStringFromClass([receiver class]));
+    return keep;
 }
 
 static BOOL YTKACEKeepsShelvesInFeed(id receiver) {
-    static SEL browseSel;
-    if (browseSel == NULL) browseSel = NSSelectorFromString(@"browseID");
-    if (![receiver respondsToSelector:browseSel]) return NO;
-    id browseID = ((id (*)(id, SEL))objc_msgSend)(receiver, browseSel);
-    if (![browseID isKindOfClass:NSString.class]) return NO;
     static NSSet<NSString *> *personal;
     if (personal == nil) personal = [NSSet setWithArray:@[@"FEhistory", @"FElibrary"]];
-    return [personal containsObject:browseID];
+    return [personal containsObject:YTKACEBrowseID(receiver)];
 }
 
 static const void *YTKACEAIChannelKey = &YTKACEAIChannelKey;
@@ -1878,20 +1964,57 @@ static BOOL YTKACESectionIsAIChannel(id receiver, id section, BOOL blocklist, BO
         }
     }
     if (hit) {
-        static SEL browseSel;
-        if (browseSel == NULL) browseSel = NSSelectorFromString(@"browseID");
-        id browseID = [receiver respondsToSelector:browseSel]
-            ? ((id (*)(id, SEL))objc_msgSend)(receiver, browseSel) : nil;
         YTKACEDebugLog(@"aislist", @"hid %@ in %@ (%@) class=%@", matched,
-                          [browseID isKindOfClass:NSString.class] ? browseID : @"-",
+                          YTKACEBrowseID(receiver) ?: @"-",
                           NSStringFromClass([receiver class]), NSStringFromClass([section class]));
     }
     return hit;
 }
 
+static BOOL YTKACEEntryIsMix(id entry) {
+    NSData *bytes = YTKACESectionBytes(entry);
+    if (bytes.length == 0) return NO;
+    return YTKACEBytesContain(bytes, YTKACEMixBytesMarkers());
+}
+
+static BOOL YTKACEMixFilteredEntries(id section) {
+    YTKACEFeedInitSels();
+    NSData *bytes = YTKACESectionBytes(section);
+    if (bytes.length != 0 &&
+        !YTKACEBytesContain(bytes, YTKACEMixBytesMarkers())) {
+        return NO;
+    }
+    id contents = YTKACEFastChildSel(section, YTKACESelContentsArray);
+    if (![contents isKindOfClass:NSMutableArray.class]) return NO;
+    NSMutableIndexSet *drop = [NSMutableIndexSet indexSet];
+    [(NSArray *)contents enumerateObjectsUsingBlock:^(id entry, NSUInteger index,
+                                                      __unused BOOL *stop) {
+        if (YTKACEEntryIsMix(entry)) [drop addIndex:index];
+    }];
+    if (drop.count == 0) return NO;
+    [(NSMutableArray *)contents removeObjectsAtIndexes:drop];
+    return [(NSArray *)contents count] == 0;
+}
+
+static NSArray *YTKACEMixFilteredFeedSections(NSArray *sections) {
+    if (!atomic_load(&YTKACEFeedHideMixes)) return sections;
+    if (![sections isKindOfClass:NSArray.class]) return sections;
+    NSMutableIndexSet *empty = [NSMutableIndexSet indexSet];
+    for (NSUInteger index = 0; index < sections.count; index++) {
+        if (YTKACEMixFilteredEntries(sections[index])) {
+            [empty addIndex:index];
+        }
+    }
+    if (empty.count == 0) return sections;
+    NSMutableArray *kept = [sections mutableCopy];
+    [kept removeObjectsAtIndexes:empty];
+    return kept;
+}
+
 static NSArray *YTKACEFilteredFeedSections(id receiver, NSArray *sections) {
     YTKACEFeedEnsureFlagObserver();
-    NSArray *adFiltered = YTKACEFilterAdSections(sections);
+    NSArray *adFiltered = YTKACEMixFilteredFeedSections(
+        YTKACEFilterAdSections(sections));
     if ([adFiltered isKindOfClass:NSArray.class] && adFiltered.count != 0 &&
         YTKACEFeatureEnabled(@"YTKACE.Preference.Overlay.CommentGuidelinesHidden")) {
         NSIndexSet *guidelines = [adFiltered indexesOfObjectsPassingTest:
@@ -1913,13 +2036,11 @@ static NSArray *YTKACEFilteredFeedSections(id receiver, NSArray *sections) {
     BOOL hideCommunity = atomic_load(&YTKACEFeedHideCommunity);
     BOOL hideHorizontalShelves = atomic_load(&YTKACEFeedHideHorizontalShelves) &&
         !YTKACEKeepsShelvesInFeed(receiver);
-    BOOL hideMixes = atomic_load(&YTKACEFeedHideMixes);
     BOOL hidePlayables = atomic_load(&YTKACEFeedHidePlayables);
     YTKACEFeedKind wanted = 0;
     if (hideShorts) wanted |= YTKACEFeedKindShorts;
     if (hideProducts) wanted |= YTKACEFeedKindProducts;
     if (hideCommunity) wanted |= YTKACEFeedKindCommunity;
-    if (hideMixes) wanted |= YTKACEFeedKindMix;
     if (hidePlayables) wanted |= YTKACEFeedKindPlayable;
     if (hideHorizontalShelves) wanted |= YTKACEFeedKindHorizontalShelves;
     BOOL hideAIBlock = atomic_load(&YTKACEFeedHideAIBlock);
@@ -1935,7 +2056,6 @@ static NSArray *YTKACEFilteredFeedSections(id receiver, NSArray *sections) {
         if (hideShorts && (kind & YTKACEFeedKindShorts)) cut = @"shorts";
         else if (hideProducts && (kind & YTKACEFeedKindProducts)) cut = @"products";
         else if (hideCommunity && (kind & YTKACEFeedKindCommunity)) cut = @"community";
-        else if (hideMixes && (kind & YTKACEFeedKindMix)) cut = @"mixes";
         else if (hidePlayables && (kind & YTKACEFeedKindPlayable)) cut = @"playables";
         else if (hideHorizontalShelves &&
             (kind & YTKACEFeedKindHorizontalShelves)) cut = @"shelves";

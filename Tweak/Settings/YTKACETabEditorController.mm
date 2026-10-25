@@ -339,7 +339,7 @@ willDisplayHeaderView:(UIView *)view
 - (void)toggleChanged:(UISwitch *)sender {
     NSString *key = objc_getAssociatedObject(sender, YTKACETabSwitchKey);
     YTKACESetPreference(key, sender.isOn);
-    if ([key isEqualToString:@"YTKACE.Preference.Tabs.Glass"] ||
+    if ([key isEqualToString:@"YTKACE.Preference.Tabs.GlassMode"] ||
         [key isEqualToString:@"YTKACE.Preference.Tabs.GlassMinimize"]) {
         YTKACERefreshPivotBarBackground();
         return;

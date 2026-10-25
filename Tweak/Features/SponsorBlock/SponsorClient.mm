@@ -121,8 +121,10 @@
                     if (!isfinite(start) || !isfinite(end) || start < 0.0 || end <= start) {
                         continue;
                     }
+                    id uuid = item[@"UUID"];
                     [segments addObject:@{@"start": @(start), @"end": @(end),
-                                          @"category": category}];
+                                          @"category": category,
+                                          @"uuid": [uuid isKindOfClass:NSString.class] ? uuid : @""}];
                 }
             }
         }

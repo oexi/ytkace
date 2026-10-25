@@ -201,7 +201,7 @@ static void YTKACEApplyNativeTopGlass(UIView *container) {
 }
 
 UIView *YTKACEMakeSettingsGlass(void) {
-    if (!YTKACELiquidGlassAvailable() || !YTKACEFeatureEnabled(@"YTKACE.Preference.Tabs.Glass")) return nil;
+    if (!YTKACELiquidGlassAvailable() || !YTKACETabBarOwnGlass()) return nil;
     Class effectClass = NSClassFromString(@"UIGlassEffect");
     SEL styleSelector = NSSelectorFromString(@"effectWithStyle:");
     UIVisualEffect *effect = [effectClass respondsToSelector:styleSelector]

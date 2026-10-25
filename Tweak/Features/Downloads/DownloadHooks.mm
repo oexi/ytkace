@@ -1,3 +1,4 @@
+#import "../Interface/AiSList.h"
 #import "DownloadCoordinator.h"
 #import "DownloadLog.h"
 #import "SABRDownloader.h"
@@ -848,6 +849,20 @@ static void YTKACEPersistPlayerRequest(id request) {
     [encoded writeToURL:YTKACERequestSeedURL() atomically:YES];
 }
 
+NSString *YTKACEPlayerOnBehalfOfUser(void) {
+    id request = nil;
+    @synchronized (YTKACESABRDownloader.class) {
+        request = YTKACELastPlayerRequest;
+    }
+    if (request == nil) return nil;
+    @try {
+        id value = [request valueForKeyPath:@"context.user.onBehalfOfUser"];
+        return [value isKindOfClass:NSString.class] && [value length] != 0 ? value : nil;
+    } @catch (__unused NSException *exception) {
+        return nil;
+    }
+}
+
 void YTKACEDiscardRestoredRequest(void) {
     BOOL restored = NO;
     @synchronized (YTKACESABRDownloader.class) {
@@ -925,16 +940,66 @@ static void YTKACEShowMenuSkipCompletion(id receiver, SEL selector, id renderer,
                                         responder, completion);
 }
 
+static NSString *YTKACEMenuItemIcon(id renderer) {
+    NSString *text = nil;
+    @try {
+        text = [renderer description];
+    } @catch (__unused NSException *exception) {
+        return nil;
+    }
+    NSRange range = [text rangeOfString:@"icon_type: "];
+    if (range.location == NSNotFound) return nil;
+    NSUInteger start = NSMaxRange(range);
+    NSUInteger end = start;
+    while (end < text.length) {
+        unichar character = [text characterAtIndex:end];
+        if (!((character >= 'A' && character <= 'Z') || character == '_' || (character >= '0' && character <= '9'))) break;
+        end++;
+    }
+    return end > start ? [text substringWithRange:NSMakeRange(start, end - start)] : nil;
+}
+
+static id YTKACEFilteredMenuRenderers(id renderers) {
+    if (![renderers isKindOfClass:NSArray.class] || [renderers count] == 0) return renderers;
+    NSDictionary<NSString *, NSString *> *hidden = @{
+        @"CAST_ICON": @"YTKACE.Preference.Menu.CastHidden",
+        @"QUEUE_PLAY_NEXT": @"YTKACE.Preference.Menu.PlayNextHidden",
+        @"QUEUE_PLAY_LAST": @"YTKACE.Preference.Menu.PlayLastHidden",
+        @"ADD_TO_REMOTE_QUEUE": @"YTKACE.Preference.Menu.PlayLastHidden",
+        @"FLAG": @"YTKACE.Preference.Menu.ReportHidden",
+        @"ADD_TO_WATCH_LATER": @"YTKACE.Preference.Menu.WatchLaterHidden",
+        @"BOOKMARK_BORDER": @"YTKACE.Preference.Menu.SaveHidden",
+        @"OFFLINE_ADD": @"YTKACE.Preference.Menu.DownloadHidden",
+        @"SHARE_ARROW": @"YTKACE.Preference.Menu.ShareHidden",
+        @"HIDE": @"YTKACE.Preference.Menu.NotInterestedHidden",
+        @"PERSON_CIRCLE_SLASH": @"YTKACE.Preference.Menu.DontRecommendHidden"
+    };
+    BOOL any = NO;
+    for (NSString *key in [NSSet setWithArray:hidden.allValues]) {
+        if (YTKACEFeatureEnabled(key)) any = YES;
+    }
+    if (!any) return renderers;
+    NSMutableArray *kept = [NSMutableArray arrayWithCapacity:[renderers count]];
+    for (id renderer in (NSArray *)renderers) {
+        NSString *key = hidden[YTKACEMenuItemIcon(renderer) ?: @""];
+        if (key != nil && YTKACEFeatureEnabled(key)) continue;
+        [kept addObject:renderer];
+    }
+    return kept.count == [renderers count] ? renderers : kept;
+}
+
 static id YTKACEActionsForRenderersLog(id receiver, SEL selector, id renderers,
                                        id view, id entry, BOOL log,
                                        id responder) {
+    id allRenderers = renderers;
+    renderers = YTKACEFilteredMenuRenderers(renderers);
     YTKACEQueuePrepareMenuRenderers(renderers);
     YTKACECaptureMenuSource(view);
     if (OriginalActionsForRenderersLog == NULL) return nil;
     id actions = ((id (*)(id, SEL, id, id, id, BOOL, id))OriginalActionsForRenderersLog)(
         receiver, selector, renderers, view, entry, log, responder);
     YTKACERouteSpeedMenuItem(renderers, actions, view, responder);
-    return actions;
+    return YTKACEAiSListAppendMenuAction(allRenderers, actions);
 }
 
 static UIView *YTKACEOverflowButtonInside(UIView *root) {
