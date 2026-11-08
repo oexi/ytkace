@@ -9,6 +9,8 @@
 #import <objc/runtime.h>
 
 static IMP OriginalOverlayDidMoveToWindow;
+static IMP OriginalMoreVideosDisabled;
+static IMP OriginalSetRelatedVideosView;
 static const void *YTKACEEdgePanAssociation = &YTKACEEdgePanAssociation;
 static const void *YTKACEGestureSurfaceAssociation =
     &YTKACEGestureSurfaceAssociation;
@@ -625,11 +627,38 @@ static void YTKACEOverlayDidMoveToWindow(UIView *receiver, SEL selector) {
     YTKACEAttachPlayerGestures(receiver, 1);
 }
 
+static BOOL YTKACEHiddenMoreVideosDisabled(id receiver, SEL selector) {
+    if (YTKACEFeatureEnabled(@"YTKACE.Preference.Overlay.MoreVideosHidden")) {
+        return NO;
+    }
+    return ((BOOL (*)(id, SEL))OriginalMoreVideosDisabled)(receiver, selector);
+}
+
+static void YTKACEHiddenSetRelatedVideosView(id receiver, SEL selector,
+                                             UIView *relatedVideosView) {
+    ((void (*)(id, SEL, UIView *))OriginalSetRelatedVideosView)(
+        receiver, selector, relatedVideosView);
+    if (YTKACEFeatureEnabled(@"YTKACE.Preference.Overlay.MoreVideosHidden")) {
+        relatedVideosView.hidden = YES;
+    }
+}
+
 void YTKACEInstallPlayerGestureHooks(void) {
     YTKACEInstallInstanceHook(
         @"YTMainAppVideoPlayerOverlayView",
         @"didMoveToWindow",
         (IMP)YTKACEOverlayDidMoveToWindow,
         &OriginalOverlayDidMoveToWindow
+    );
+    YTKACEInstallInstanceHook(
+        @"YTFullscreenEngagementOverlayView",
+        @"setRelatedVideosView:",
+        (IMP)YTKACEHiddenSetRelatedVideosView,
+        &OriginalSetRelatedVideosView
+    );
+    YTKACEInstallInstanceHook(
+        @"YTMainAppVideoPlayerOverlayViewController",
+        @"shouldEnableRelatedVideos",
+        (IMP)YTKACEHiddenMoreVideosDisabled, &OriginalMoreVideosDisabled
     );
 }

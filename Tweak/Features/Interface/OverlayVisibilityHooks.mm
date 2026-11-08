@@ -34,6 +34,10 @@ static IMP OriginalTimelyShelfFrame;
 static IMP OriginalTimelyShelfHeightVC;
 static IMP OriginalTimelyShelfHeightBar;
 static IMP OriginalTimelyShelfHeightInput;
+static IMP OriginalPlayerBarShouldShow;
+static IMP OriginalAutonavShowEndscreen;
+static IMP OriginalWatermarkNodeApply;
+static const void *YTKACEWatermarkNodeAssociation = &YTKACEWatermarkNodeAssociation;
 
 static NSUInteger YTKACEProductHiddenCount = 0;
 
@@ -181,12 +185,6 @@ static BOOL YTKACEOverlayShouldHide(UIView *view) {
     if (YTKACEFeatureEnabled(@"YTKACE.Preference.Overlay.ContinueWatchingDisabled") &&
         YTKACEOverlayTokenMatches(token, @[
             @"continuewatching", @"continue_watching"
-        ])) {
-        return YES;
-    }
-    if (YTKACEFeatureEnabled(@"YTKACE.Preference.Overlay.RelatedVideosHidden") &&
-        YTKACEOverlayTokenMatches(token, @[
-            @"relatedvideo", @"related_video", @"morevideos", @"more_videos"
         ])) {
         return YES;
     }
@@ -571,14 +569,10 @@ static void YTKACEApplyOverlayBehavior(UIView *view) {
     BOOL playPause = YTKACEOverlayTokenMatches(token, @[
         @"playpause", @"play_pause", @"playbackbutton"
     ]);
-    BOOL progress = YTKACEOverlayTokenMatches(token, @[
-        @"progress", @"scrubber", @"playerbar", @"player_bar"
-    ]);
     BOOL control = [view isKindOfClass:UIControl.class] ||
         YTKACEOverlayTokenMatches(token, @[@"control", @"button"]);
     BOOL force = (YTKACEOverlayPreference(@"YTKACE.Preference.Overlay.AlwaysShowPlayPause") && playPause) ||
-        (YTKACEOverlayPreference(@"YTKACE.Preference.Overlay.AlwaysShowControls") && control) ||
-        (YTKACEFeatureEnabled(@"YTKACE.Preference.Overlay.ProgressAlwaysVisible") && progress);
+        (YTKACEOverlayPreference(@"YTKACE.Preference.Overlay.AlwaysShowControls") && control);
     YTKACESetOverlayForcedVisible(view, force);
 
     BOOL previousNext = YTKACEOverlayTokenMatches(
@@ -688,7 +682,9 @@ static void YTKACEApplyOverlaySelectors(id overlay) {
         @"closedCaptionsOrSubtitlesButton": @"YTKACE.Preference.Overlay.CaptionsButtonHidden",
         @"infoCardButton": @"YTKACE.Preference.Overlay.InfoCardsHidden",
         @"watermarkView": @"YTKACE.Preference.Overlay.WatermarkHidden",
+        @"featuredChannelWatermarkImageView": @"YTKACE.Preference.Overlay.WatermarkHidden",
         @"endscreenView": @"YTKACE.Preference.Overlay.EndScreenHidden",
+        @"creatorEndscreenView": @"YTKACE.Preference.Overlay.EndScreenHidden",
         @"playPauseButton": @"YTKACE.Preference.Overlay.PlayPauseHidden",
         @"overflowButton": @"YTKACE.Preference.Overlay.MoreButtonHidden",
         @"settingsButton": @"YTKACE.Preference.Overlay.MoreButtonHidden"
@@ -919,6 +915,67 @@ static void YTKACESetNextButtonEnabled(id receiver, SEL selector, BOOL enabled) 
         YTKACEFeatureEnabled(@"YTKACE.Preference.Overlay.PreviousNextHidden"));
 }
 
+static BOOL YTKACEPlayerBarShouldShow(id receiver, SEL selector, id controller) {
+    if (YTKACEFeatureEnabled(@"YTKACE.Preference.Overlay.ProgressAlwaysVisible")) {
+        return YES;
+    }
+    return ((BOOL (*)(id, SEL, id))OriginalPlayerBarShouldShow)(receiver, selector, controller);
+}
+
+static BOOL YTKACEAutonavFlag(id object, NSString *name) {
+    SEL selector = NSSelectorFromString(name);
+    return [object respondsToSelector:selector] && ((BOOL (*)(id, SEL))objc_msgSend)(object, selector);
+}
+
+static void YTKACEAutonavShowEndscreen(id receiver, SEL selector) {
+    if (!YTKACEFeatureEnabled(@"YTKACE.Preference.Overlay.AutoplayPromptHidden")) {
+        if (OriginalAutonavShowEndscreen != NULL) {
+            ((void (*)(id, SEL))OriginalAutonavShowEndscreen)(receiver, selector);
+        }
+        return;
+    }
+    SEL delegateGetter = NSSelectorFromString(@"endscreenDelegate");
+    id delegate = [receiver respondsToSelector:delegateGetter] ?
+        ((id (*)(id, SEL))objc_msgSend)(receiver, delegateGetter) : nil;
+    SEL play = NSSelectorFromString(@"playAutonav");
+    if ((YTKACEAutonavFlag(receiver, @"shouldAutonavInBackground") ||
+         YTKACEAutonavFlag(receiver, @"shouldStartCountdown")) &&
+        !YTKACEAutonavFlag(delegate, @"isVideoInSingleLoop") &&
+        [receiver respondsToSelector:play]) {
+        ((void (*)(id, SEL))objc_msgSend)(receiver, play);
+    }
+}
+
+static void YTKACEApplyWatermarkNode(id node) {
+    BOOL hide = YTKACEFeatureEnabled(@"YTKACE.Preference.Overlay.WatermarkHidden");
+    if (!hide && objc_getAssociatedObject(node, YTKACEWatermarkNodeAssociation) == nil) return;
+    objc_setAssociatedObject(node, YTKACEWatermarkNodeAssociation, hide ? @YES : nil,
+                             OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    ((void (*)(id, SEL, BOOL))objc_msgSend)(node, NSSelectorFromString(@"setHidden:"), hide);
+}
+
+static void YTKACEWatermarkNodeApply(id receiver, SEL selector) {
+    if (OriginalWatermarkNodeApply != NULL) {
+        ((void (*)(id, SEL))OriginalWatermarkNodeApply)(receiver, selector);
+    }
+    SEL getter = NSSelectorFromString(@"accessibilityIdentifier");
+    if (![receiver respondsToSelector:getter] ||
+        ![receiver respondsToSelector:NSSelectorFromString(@"setHidden:")]) {
+        return;
+    }
+    id identifier = ((id (*)(id, SEL))objc_msgSend)(receiver, getter);
+    if (![identifier isKindOfClass:NSString.class] || ![identifier isEqualToString:@"watermark_image"]) return;
+    if (NSThread.isMainThread) {
+        YTKACEApplyWatermarkNode(receiver);
+        return;
+    }
+    __weak id weakNode = receiver;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        id node = weakNode;
+        if (node != nil) YTKACEApplyWatermarkNode(node);
+    });
+}
+
 static NSString *const YTKACEFullscreenActionsKey =
     @"YTKACE.Preference.Overlay.FullscreenActionsHidden";
 
@@ -1066,4 +1123,16 @@ void YTKACEInstallOverlayVisibilityHooks(void) {
                               @"setNextButtonEnabled:",
                               (IMP)YTKACESetNextButtonEnabled,
                               &OriginalSetNextButtonEnabled);
+    YTKACEInstallInstanceHook(@"YTMainAppVideoPlayerOverlayViewController",
+                              @"playerBarControllerShouldShowPlayerBarView:",
+                              (IMP)YTKACEPlayerBarShouldShow,
+                              &OriginalPlayerBarShouldShow);
+    YTKACEInstallInstanceHook(@"YTAutonavEndscreenController",
+                              @"showEndscreen",
+                              (IMP)YTKACEAutonavShowEndscreen,
+                              &OriginalAutonavShowEndscreen);
+    YTKACEInstallInstanceHook(@"ELMImageNode",
+                              @"controllerDidApplyProperties",
+                              (IMP)YTKACEWatermarkNodeApply,
+                              &OriginalWatermarkNodeApply);
 }

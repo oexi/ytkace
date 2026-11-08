@@ -9,6 +9,7 @@ LIBRARY_NAME = YTKACE
 YTKACE_FILES = \
 	Tweak/Entry.mm \
 	Tweak/Runtime/Hooking.mm \
+	Tweak/Runtime/Availability.mm \
 	Tweak/Runtime/Preferences.mm \
 	Tweak/Runtime/Localization.mm \
 	Tweak/UI/Assets.mm \
@@ -80,6 +81,7 @@ YTKACE_FILES = \
 	Tweak/Features/Interface/AiSList.mm \
 	Tweak/Features/Interface/AiSListReport.mm \
 	Tweak/Features/Interface/LinkCleaning.mm \
+	Tweak/Features/Interface/HapticHooks.mm \
 	Tweak/Features/Interface/MiscellaneousHooks.mm \
 	Tweak/Features/Interface/CopyCommentHooks.mm \
 	Tweak/Features/Interface/ProfilePictureViewer.mm \
