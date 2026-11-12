@@ -365,7 +365,22 @@ static void YTKACENoteStartupIdentifier(NSString *canonical, id item) {
            forKey:@"YTKACE.Preference.Tabs.Known"];
 }
 
+// The playlist picked for the Playlist tab, as a browse id (VL + playlist id).
+static NSString *YTKACECustomPlaylistBrowseID(void) {
+    id stored = [NSUserDefaults.standardUserDefaults objectForKey:@"YTKACE.Preference.Tabs.CustomPlaylist"];
+    if (![stored isKindOfClass:NSString.class] || [stored length] == 0) return nil;
+    return [@"VL" stringByAppendingString:stored];
+}
+
+// Playlist ids are random letters, so match the Playlist tab exactly and
+// before the other tabs' substring checks.
+static BOOL YTKACEIsCustomPlaylistToken(NSString *token) {
+    NSString *browseID = YTKACECustomPlaylistBrowseID();
+    return browseID != nil && [token isEqualToString:browseID.lowercaseString];
+}
+
 static NSString *YTKACEHideKeyForToken(NSString *token) {
+    if (YTKACEIsCustomPlaylistToken(token)) return @"YTKACE.Preference.Tabs.Hidden.CustomPlaylist";
     if ([token containsString:@"uc-9-kytw8zkzndhqj6fgpwq"] ||
         [token containsString:@"music_home"]) {
         return @"YTKACE.Preference.Tabs.Hidden.Music";
@@ -439,6 +454,7 @@ static NSString *YTKACEHideKeyForToken(NSString *token) {
 }
 
 static NSString *YTKACECanonicalTabToken(NSString *token) {
+    if (YTKACEIsCustomPlaylistToken(token)) return @"customplaylist";
     if ([token containsString:@"uc-9-kytw8zkzndhqj6fgpwq"] ||
         [token containsString:@"music_home"]) {
         return @"music";
@@ -710,7 +726,7 @@ static void YTKACESetPivotRenderer(id receiver, SEL selector, id renderer) {
                 [filtered addObject:candidate];
             }
 
-            NSArray<NSDictionary *> *extraTabs = @[
+            NSMutableArray<NSDictionary *> *extraTabs = [@[
                 @{@"token": @"music", @"id": @"UC-9-kyTW8ZkZNDHQJ6FgpwQ",
                   @"title": @"Music", @"key": @"YTKACE.Preference.Tabs.Hidden.Music", @"icon": @1001},
                 @{@"token": @"live", @"id": @"UC4R8DWoMoI7CAwX8_LjQHig",
@@ -739,7 +755,12 @@ static void YTKACESetPivotRenderer(id receiver, SEL selector, id renderer) {
                   @"title": YTKACELocalized(@"Subscriptions"),
                   @"key": @"YTKACE.Preference.Tabs.Hidden.Subscriptions",
                   @"icon": @(YTKACESubscriptionsIconType() > 0 ? YTKACESubscriptionsIconType() : 1013)}
-            ];
+            ] mutableCopy];
+            NSString *playlistBrowseID = YTKACECustomPlaylistBrowseID();
+            if (playlistBrowseID != nil) {
+                [extraTabs addObject:@{@"token": @"customplaylist", @"id": playlistBrowseID,
+                    @"title": @"Playlist", @"key": @"YTKACE.Preference.Tabs.Hidden.CustomPlaylist", @"icon": @1014}];
+            }
             NSMutableSet<NSString *> *present = [NSMutableSet set];
             for (id item in filtered) {
                 [present addObject:YTKACECanonicalTabToken(YTKACETabToken(item))];
@@ -1110,8 +1131,11 @@ static BOOL YTKACENativeTabRows(UIView *view, CGRect *iconFrame, CGRect *labelFr
             image == nil || image.hidden || CGRectIsEmpty(image.frame)) {
             continue;
         }
-        *iconFrame = [button convertRect:image.frame toView:view];
-        *labelFrame = [button convertRect:label.frame toView:view];
+        // Measure the rows inside the sibling tab, not relative to this one:
+        // tabs share a size, but on a vertical tab bar (iPhone Duo) they are
+        // stacked, so converting to this tab would shift by the tab offset.
+        *iconFrame = [button convertRect:image.frame toView:sibling];
+        *labelFrame = [button convertRect:label.frame toView:sibling];
         return YES;
     }
     return NO;
@@ -1264,6 +1288,8 @@ static NSDictionary *YTKACEExtraTabIcon(NSString *token) {
             @"notifications": @[@"ic_notifications_none_3x_Normal",
                                  @"ic_notifications_3x_Normal",
                                  @"bell", @"bell.fill"],
+            @"customplaylist": @[@"playlist", @"playlist_fill",
+                                  @"list.bullet.rectangle", @"list.bullet.rectangle.fill"],
             @"watchlater": @[@"clock_24pt_3x_Normal",
                               @"yt_fill_clock_24pt_3x_Normal",
                               @"clock", @"clock.fill"],
@@ -1939,7 +1965,7 @@ static id YTKACEPivotItemAnyRenderer(UIView *item) {
     return renderer;
 }
 
-static void YTKACESelectPivotItem(UIView *item) {
+void YTKACESelectPivotItem(UIView *item) {
     id controller = nil;
     id renderer = nil;
     @try {
@@ -3880,6 +3906,8 @@ static BOOL YTKACENavigateToPivot(id controller, NSString *identifier) {
     return YES;
 }
 
+static BOOL YTKACEStartupNavigated;
+
 static void YTKACEApplyStartupTab(UIView *receiver) {
     if (YTKACEStartupApplied) return;
     NSString *identifier = YTKACEWantedStartupPivot();
@@ -3901,8 +3929,17 @@ static void YTKACEApplyStartupTab(UIView *receiver) {
     SEL current = NSSelectorFromString(@"selectedPivotIdentifier");
     if ([target respondsToSelector:current]) {
         id selected = ((id (*)(id, SEL))objc_msgSend)(target, current);
-        if ([selected isKindOfClass:NSString.class] &&
-            [selected caseInsensitiveCompare:identifier] == NSOrderedSame &&
+        // Already switched to it by tapping it below: done. Running the Home
+        // workaround after a real switch breaks tab switching for good.
+        if (YTKACEStartupNavigated && [selected isKindOfClass:NSString.class] &&
+            [selected caseInsensitiveCompare:identifier] == NSOrderedSame) {
+            YTKACEStartupApplied = YES;
+            return;
+        }
+        // Home hidden: YouTube files its launch Home page under whichever tab
+        // it starts on. Point it at Home first, then switch, so that tab gets
+        // its own page. Only before our first switch.
+        if ([selected isKindOfClass:NSString.class] && !YTKACEStartupNavigated &&
             [NSUserDefaults.standardUserDefaults boolForKey:@"YTKACE.Preference.Tabs.Hidden.Home"]) {
             SEL selectItem = NSSelectorFromString(@"selectItemWithPivotIdentifier:");
             SEL setSelected = NSSelectorFromString(@"setSelectedPivotIdentifier:");
@@ -3914,8 +3951,10 @@ static void YTKACEApplyStartupTab(UIView *receiver) {
                 [controller setValue:@"FEwhat_to_watch" forKey:@"_pivotIdentifier"];
             } @catch (__unused NSException *exception) {
             }
-            YTKACENavigateToPivot(controller, identifier);
-            YTKACEStartupApplied = YES;
+            YTKACEStartupNavigated = YTKACENavigateToPivot(controller, identifier);
+            if ([selected caseInsensitiveCompare:identifier] == NSOrderedSame || !YTKACEStartupNavigated) {
+                YTKACEStartupApplied = YES;
+            }
             return;
         }
         if ([selected isKindOfClass:NSString.class] &&
@@ -3925,7 +3964,10 @@ static void YTKACEApplyStartupTab(UIView *receiver) {
         }
     }
 
-    if (YTKACENavigateToPivot(controller, identifier)) return;
+    if (YTKACENavigateToPivot(controller, identifier)) {
+        YTKACEStartupNavigated = YES;
+        return;
+    }
 
     SEL select = NSSelectorFromString(@"selectItemWithPivotIdentifier:");
     if ([target respondsToSelector:select]) {
@@ -3991,6 +4033,8 @@ static void YTKACEPivotItemLayout(UIView *receiver, SEL selector) {
     YTKACEApplyPivotItemPresentation(receiver);
 }
 
+void YTKACEDuoTabsSelectionChanged(UIView *item);
+
 static void YTKACEPivotItemSetSelected(UIView *receiver,
                                        SEL selector,
                                        BOOL selected) {
@@ -4005,6 +4049,7 @@ static void YTKACEPivotItemSetSelected(UIView *receiver,
                              @(selected),
                              OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     YTKACEApplyPivotItemPresentation(receiver);
+    YTKACEDuoTabsSelectionChanged(receiver);
     if (YTKACEStencilRendering) return;
     if (selected) {
         UIView *bar = receiver.superview;

@@ -744,6 +744,28 @@ void YTKACESaveVideoToPhotosFile(NSURL *url,
         [self showAlertWithTitle:@"YTKACE" message:YTKACELocalized(@"No active video was found.")];
         return;
     }
+    // With the HLS swap the player's response has no formats; fetch the
+    // video's own response like the menu's Download does.
+    NSString *videoID = [YTKACEStreamResolver videoIDFromPlayerResponse:self.playerResponse];
+    if (self.externalResponse == nil && videoID.length != 0 &&
+        [YTKACEStreamResolver optionsFromPlayerResponse:self.playerResponse].count == 0) {
+        YTKACEDownloadLog(@"resolver", @"player response has no formats, resolving video=%@", videoID);
+        YTKACEShowNotice(YTKACELocalized(@"Preparing download"));
+        __weak YTKACEDownloadCoordinator *weakSelf = self;
+        __weak UIView *weakAnchor = anchor;
+        YTKACEResolvePlayerResponse(videoID, ^(id response, NSError *error) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                if (response == nil) {
+                    YTKACEDownloadLog(@"resolver", @"resolve failed video=%@ error=%@",
+                        videoID, error.localizedDescription ?: @"unknown");
+                    YTKACEShowNotice(YTKACELocalized(@"Download unavailable"));
+                    return;
+                }
+                [weakSelf showDownloadMenuForResponse:response sourceView:weakAnchor];
+            });
+        });
+        return;
+    }
     self.downloadSourceView = anchor;
 
     __weak YTKACEDownloadCoordinator *weakSelf = self;
@@ -1247,6 +1269,41 @@ void YTKACESaveVideoToPhotosFile(NSURL *url,
             countStyle:NSByteCountFormatterCountStyleFile] : YTKACELocalized(@"Unknown size");
 }
 
+// Download defaults: Ask (0), Best (-1) or a maximum height for video, and
+// Ask (0) or YouTube's default track (1) for audio.
+static NSInteger YTKACEDefaultDownloadQuality(void) {
+    return [NSUserDefaults.standardUserDefaults integerForKey:@"YTKACE.Preference.Downloads.DefaultQuality"];
+}
+
+static BOOL YTKACEDefaultDownloadAudio(void) {
+    return [NSUserDefaults.standardUserDefaults integerForKey:@"YTKACE.Preference.Downloads.DefaultAudio"] == 1;
+}
+
+static NSInteger YTKACEOptionHeight(YTKACEStreamOption *option) {
+    if (option.height > 0) return option.height;
+    NSScanner *scanner = [NSScanner scannerWithString:option.qualityLabel ?: @""];
+    NSInteger value = 0;
+    return [scanner scanInteger:&value] ? value : 0;
+}
+
+// The best option at or below the saved maximum, from a best-first list.
+static YTKACEStreamOption *YTKACEPreferredVideo(NSArray<YTKACEStreamOption *> *bestFirst) {
+    const NSInteger setting = YTKACEDefaultDownloadQuality();
+    if (setting == 0) return nil;
+    for (YTKACEStreamOption *option in bestFirst) {
+        if (setting < 0 || YTKACEOptionHeight(option) <= setting) return option;
+    }
+    return nil;
+}
+
+static YTKACEStreamOption *YTKACEPreferredAudio(NSArray<YTKACEStreamOption *> *options) {
+    if (!YTKACEDefaultDownloadAudio()) return nil;
+    for (YTKACEStreamOption *option in options) {
+        if (option.isDefaultAudio) return option;
+    }
+    return options.count == 1 ? options.firstObject : nil;
+}
+
 - (void)presentDirectVideoMenuForCategory:(NSString *)category {
     NSArray<NSString *> *codecOrder = @[@"H.264", @"VP9", @"AV1"];
     NSMutableArray<YTKACEStreamOption *> *videos = [NSMutableArray array];
@@ -1273,6 +1330,12 @@ void YTKACESaveVideoToPhotosFile(NSURL *url,
             (leftCodec > rightCodec ? NSOrderedDescending : NSOrderedSame);
     }];
     __weak YTKACEDownloadCoordinator *weakSelf = self;
+    YTKACEStreamOption *preferred = YTKACEPreferredVideo(videos);
+    if (preferred != nil) {
+        YTKACEDownloadLog(@"resolver", @"default quality %@", preferred.qualityLabel ?: @"-");
+        [self showAudioLanguagesForVideo:preferred audioOnly:NO category:category];
+        return;
+    }
     NSMutableArray *actions = [NSMutableArray array];
     for (YTKACEStreamOption *option in videos) {
         NSString *title = [NSString stringWithFormat:@"%@ · %@ · %@",
@@ -1311,6 +1374,11 @@ void YTKACESaveVideoToPhotosFile(NSURL *url,
         return left.bitrate > right.bitrate ? NSOrderedAscending : NSOrderedDescending;
     }];
     __weak YTKACEDownloadCoordinator *weakSelf = self;
+    YTKACEStreamOption *preferredAudio = YTKACEPreferredAudio(audios);
+    if (preferredAudio != nil) {
+        [self beginSABRDownloadVideo:videoOption audio:preferredAudio audioOnly:audioOnly category:category];
+        return;
+    }
     NSMutableArray *actions = [NSMutableArray array];
     for (YTKACEStreamOption *option in audios) {
         NSString *stable = [self isStableVolumeOption:option]
@@ -1371,6 +1439,16 @@ void YTKACESaveVideoToPhotosFile(NSURL *url,
                          message:YTKACELocalized(@"No compatible video formats were found.")];
         return;
     }
+    NSArray<YTKACEStreamOption *> *bestFirst = [options sortedArrayWithOptions:NSSortStable
+        usingComparator:^NSComparisonResult(YTKACEStreamOption *left, YTKACEStreamOption *right) {
+        const NSInteger a = YTKACEOptionHeight(left), b = YTKACEOptionHeight(right);
+        return a == b ? NSOrderedSame : (a > b ? NSOrderedAscending : NSOrderedDescending);
+    }];
+    YTKACEStreamOption *preferred = YTKACEPreferredVideo(bestFirst);
+    if (preferred != nil) {
+        [self showAudioLanguagesForVideo:preferred audioOnly:NO category:category];
+        return;
+    }
     NSMutableArray *actions = [NSMutableArray array];
     for (YTKACEStreamOption *option in options) {
         NSString *size = option.contentLength > 0
@@ -1410,6 +1488,11 @@ void YTKACESaveVideoToPhotosFile(NSURL *url,
     if (options.count == 0) {
         [self showAlertWithTitle:YTKACELocalized(@"Download unavailable")
                          message:YTKACELocalized(@"No compatible audio formats were found.")];
+        return;
+    }
+    YTKACEStreamOption *preferredAudio = YTKACEPreferredAudio(options);
+    if (preferredAudio != nil) {
+        [self beginSABRDownloadVideo:videoOption audio:preferredAudio audioOnly:audioOnly category:category];
         return;
     }
     __weak YTKACEDownloadCoordinator *weakSelf = self;

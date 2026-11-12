@@ -62,7 +62,10 @@ static IMP OriginalActionCellControllerInit;
 static IMP OriginalActionCellSize;
 static IMP OriginalActionCellSizeWithInsets;
 static IMP OriginalASCollectionViewLayout;
+static IMP OriginalContentHostCellLayout;
 static const void *YTKACEContentHiddenAssociation = &YTKACEContentHiddenAssociation;
+static const void *YTKACEHostCellAssociation = &YTKACEHostCellAssociation;
+static _Atomic NSUInteger YTKACEHostCellCount;
 static NSString *YTKACENormalizedDescription(id object);
 static const void *YTKACEActionCellPreferenceAssociation =
     &YTKACEActionCellPreferenceAssociation;
@@ -718,6 +721,55 @@ static NSArray<NSString *> *YTKACEActionButtonIdentifiers(UIView *view) {
     return found.array;
 }
 
+static void YTKACEHostCellCollapse(UIView *cell) {
+    CGRect frame = cell.frame;
+    if (frame.size.height == 0.0 && cell.hidden) return;
+    frame.size.height = 0.0;
+    cell.frame = frame;
+    cell.hidden = YES;
+    cell.userInteractionEnabled = NO;
+    for (UIView *ancestor = cell.superview; ancestor != nil;
+         ancestor = ancestor.superview) {
+        if ([ancestor isKindOfClass:UICollectionView.class]) {
+            [((UICollectionView *)ancestor).collectionViewLayout invalidateLayout];
+            break;
+        }
+    }
+}
+
+static void YTKACECollapseHostCell(UIView *view) {
+    if (view == nil) return;
+    UIView *cell = view;
+    while (cell != nil &&
+           ![cell isKindOfClass:UICollectionViewCell.class] &&
+           ![NSStringFromClass([cell class]) hasSuffix:@"CollectionViewCell"]) {
+        cell = cell.superview;
+    }
+    view.hidden = YES;
+    if (cell == nil) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [view removeFromSuperview];
+        });
+        return;
+    }
+    BOOL associated = [objc_getAssociatedObject(
+        cell, YTKACEHostCellAssociation) boolValue];
+    objc_setAssociatedObject(cell, YTKACEHostCellAssociation, @YES,
+                             OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    if (!associated) atomic_fetch_add(&YTKACEHostCellCount, 1);
+    YTKACEHostCellCollapse(cell);
+}
+
+static void YTKACEHostCellLayout(UIView *receiver, SEL selector) {
+    if (OriginalContentHostCellLayout != NULL) {
+        ((void (*)(id, SEL))OriginalContentHostCellLayout)(receiver, selector);
+    }
+    if (atomic_load(&YTKACEHostCellCount) == 0) return;
+    if ([objc_getAssociatedObject(receiver, YTKACEHostCellAssociation) boolValue]) {
+        YTKACEHostCellCollapse(receiver);
+    }
+}
+
 static void YTKACERestoreHiddenView(UIView *view) {
     NSNumber *baseline = objc_getAssociatedObject(
         view, YTKACEContentHiddenAssociation);
@@ -743,6 +795,13 @@ static NSUInteger YTKACESizableChildCount(UIView *view) {
 }
 
 static void YTKACEActionCellPrepareForReuse(UIView *receiver, SEL selector) {
+    if ([objc_getAssociatedObject(receiver, YTKACEHostCellAssociation) boolValue]) {
+        objc_setAssociatedObject(receiver, YTKACEHostCellAssociation, nil,
+                                 OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        atomic_fetch_sub(&YTKACEHostCellCount, 1);
+        receiver.hidden = NO;
+        receiver.userInteractionEnabled = YES;
+    }
     NSNumber *baseline = objc_getAssociatedObject(
         receiver, YTKACEContentHiddenAssociation);
     if (baseline != nil) {
@@ -864,6 +923,12 @@ static void YTKACEEnsureActionCellReuseHook(void) {
     YTKACEEnsureFixedBarHook();
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
+        YTKACEInstallInstanceHook(
+            @"_ASCollectionViewCell",
+            @"layoutSubviews",
+            (IMP)YTKACEHostCellLayout,
+            &OriginalContentHostCellLayout
+        );
         YTKACEInstallInstanceHook(
             @"_ASCollectionViewCell",
             @"prepareForReuse",
@@ -1096,6 +1161,7 @@ static _Atomic BOOL YTKACEFeedHideProducts = NO;
 static _Atomic BOOL YTKACEFeedHideCommunity = NO;
 static _Atomic BOOL YTKACEFeedHideHorizontalShelves = NO;
 static _Atomic BOOL YTKACEFeedHideMixes = NO;
+static _Atomic BOOL YTKACEFeedHideHomeLive = NO;
 static _Atomic BOOL YTKACEFeedHidePlayables = NO;
 static _Atomic BOOL YTKACEFeedHideAIBlock = NO;
 static _Atomic BOOL YTKACEFeedHideAIWarn = NO;
@@ -1114,12 +1180,14 @@ static void YTKACEFeedRefreshFlags(void) {
         YTKACEFeatureEnabled(@"YTKACE.Preference.Feed.HorizontalShelvesHidden");
     BOOL hideMixes =
         YTKACEFeatureEnabled(@"YTKACE.Preference.Feed.MixesHidden");
+    BOOL hideHomeLive =
+        YTKACEFeatureEnabled(@"YTKACE.Preference.Feed.HomeLiveHidden");
     BOOL hidePlayables =
         YTKACEFeatureEnabled(@"YTKACE.Preference.Feed.PlayablesHidden");
     BOOL hideAIBlock = YTKACEFeatureEnabled(@"YTKACE.Preference.Feed.AIChannelsHidden");
     BOOL hideAIWarn = YTKACEFeatureEnabled(@"YTKACE.Preference.Feed.SuspectedAIChannelsHidden");
     if (hideAIBlock || hideAIWarn) YTKACEAiSListRefreshIfStale();
-    BOOL hideAny = (hideShorts || hideProducts ||
+    BOOL hideAny = (hideShorts || hideProducts || hideHomeLive ||
         hideCommunity || hideHorizontalShelves || hideMixes || hidePlayables || hideAIBlock || hideAIWarn);
     BOOL actionHideAny = YTKACEAnyActionPreferenceEnabled();
     BOOL contentHideAny = (hideAny ||
@@ -1150,6 +1218,7 @@ static void YTKACEFeedRefreshFlags(void) {
     atomic_store(&YTKACEFeedHideCommunity, hideCommunity);
     atomic_store(&YTKACEFeedHideHorizontalShelves, hideHorizontalShelves);
     atomic_store(&YTKACEFeedHideMixes, hideMixes);
+    atomic_store(&YTKACEFeedHideHomeLive, hideHomeLive);
     atomic_store(&YTKACEFeedHidePlayables, hidePlayables);
     atomic_store(&YTKACEFeedHideAIBlock, hideAIBlock);
     atomic_store(&YTKACEFeedHideAIWarn, hideAIWarn);
@@ -1340,6 +1409,7 @@ typedef NS_OPTIONS(NSUInteger, YTKACEFeedKind) {
     YTKACEFeedKindCommunity = 1 << 2,
     YTKACEFeedKindPlayable  = 1 << 3,
     YTKACEFeedKindHorizontalShelves = 1 << 4,
+    YTKACEFeedKindLive      = 1 << 5,
 };
 
 static NSArray<NSString *> *YTKACEShortsClasses(void) {
@@ -1633,6 +1703,7 @@ static NSArray<NSString *> *YTKACEProductsMarkers(void) {
     dispatch_once(&t, ^{ v = @[
         @"merchandise_shelf", @"merchandise_item",
         @"product_shelf", @"products_shelf", @"shopping_shelf",
+        @"shopping_description_shelf",
         @"promoted_sparkles_text_product_watch",
         @"product_in_video", @"products_in_video"
     ]; });
@@ -1710,6 +1781,18 @@ static NSArray<NSString *> *YTKACEPlayableBytesMarkers(void) {
     return v;
 }
 
+// Live videos carry the LIVE badge's icon; their view count reads "N
+// watching". The Live filter chip carries the icon too, but chip bars are
+// never filtered (YTKACEFeedKindForSection).
+static NSArray<NSString *> *YTKACELiveBytesMarkers(void) {
+    static NSArray<NSString *> *v;
+    static dispatch_once_t t;
+    dispatch_once(&t, ^{ v = @[
+        @"youtube_outline_experimental/live_24pt"
+    ]; });
+    return v;
+}
+
 static NSArray<NSString *> *YTKACEHorizontalShelfBytesMarkers(void) {
     static NSArray<NSString *> *v;
     static dispatch_once_t t;
@@ -1739,7 +1822,7 @@ static YTKACEFeedKind YTKACEFeedKindForSection(id section,
     }
     BOOL truncated = NO;
     YTKACEFeedKind structural = YTKACEFeedKindStructural(
-        section, wanted & ~YTKACEFeedKindHorizontalShelves, &truncated);
+        section, wanted & ~(YTKACEFeedKindHorizontalShelves | YTKACEFeedKindLive), &truncated);
     if ((wanted & YTKACEFeedKindShorts) &&
         !(structural & YTKACEFeedKindShorts)) {
         if (YTKACEFastAllChildrenReel(section)) {
@@ -1766,6 +1849,10 @@ static YTKACEFeedKind YTKACEFeedKindForSection(id section,
             if ((missing & YTKACEFeedKindPlayable) &&
                 YTKACEBytesContain(bytes, YTKACEPlayableBytesMarkers())) {
                 structural |= YTKACEFeedKindPlayable;
+            }
+            if ((missing & YTKACEFeedKindLive) &&
+                YTKACEBytesContain(bytes, YTKACELiveBytesMarkers())) {
+                structural |= YTKACEFeedKindLive;
             }
             if ((missing & YTKACEFeedKindHorizontalShelves) &&
                 YTKACEBytesContain(bytes,
@@ -2036,11 +2123,25 @@ static NSArray *YTKACEFilteredFeedSections(id receiver, NSArray *sections) {
     BOOL hideHorizontalShelves = atomic_load(&YTKACEFeedHideHorizontalShelves) &&
         !YTKACEKeepsShelvesInFeed(receiver);
     BOOL hidePlayables = atomic_load(&YTKACEFeedHidePlayables);
+    BOOL hideLive = atomic_load(&YTKACEFeedHideHomeLive) &&
+        YTKACEShortsSurface(receiver) == YTKACEFeedSurfaceHome;
+    if (hideLive) {
+        // Home's "Live" chip loads a page of live streams under Home's browse
+        // ID, which the user opened on purpose. Its batches are half live
+        // streams (the other sections aren't videos), while regular Home
+        // batches have one or two, so a batch that is at least half live is kept.
+        NSUInteger live = 0;
+        for (id section in adFiltered) {
+            if (YTKACEFeedKindForSection(section, YTKACEFeedKindLive) & YTKACEFeedKindLive) live++;
+        }
+        if (live >= 3 && live * 2 >= adFiltered.count) hideLive = NO;
+    }
     YTKACEFeedKind wanted = 0;
     if (hideShorts) wanted |= YTKACEFeedKindShorts;
     if (hideProducts) wanted |= YTKACEFeedKindProducts;
     if (hideCommunity) wanted |= YTKACEFeedKindCommunity;
     if (hidePlayables) wanted |= YTKACEFeedKindPlayable;
+    if (hideLive) wanted |= YTKACEFeedKindLive;
     if (hideHorizontalShelves) wanted |= YTKACEFeedKindHorizontalShelves;
     BOOL hideAIBlock = atomic_load(&YTKACEFeedHideAIBlock);
     BOOL hideAIWarn = atomic_load(&YTKACEFeedHideAIWarn);
@@ -2056,9 +2157,11 @@ static NSArray *YTKACEFilteredFeedSections(id receiver, NSArray *sections) {
         else if (hideProducts && (kind & YTKACEFeedKindProducts)) cut = @"products";
         else if (hideCommunity && (kind & YTKACEFeedKindCommunity)) cut = @"community";
         else if (hidePlayables && (kind & YTKACEFeedKindPlayable)) cut = @"playables";
+        else if (hideLive && (kind & YTKACEFeedKindLive)) cut = @"live";
         else if (hideHorizontalShelves &&
             (kind & YTKACEFeedKindHorizontalShelves)) cut = @"shelves";
         if (cut != nil) {
+            YTKACEDebugLog(@"feed", @"removed %@ from %@", cut, YTKACEBrowseID(receiver) ?: @"-");
             continue;
         }
         [filtered addObject:section];
@@ -2316,7 +2419,6 @@ static void YTKACEDisplayViewDidMove(UIView *receiver, SEL selector) {
         ((void (*)(id, SEL))OriginalDisplayViewDidMove)(receiver, selector);
     }
     YTKACEApplyContentVisibility(receiver);
-    YTKACEHandleAdDisplayView(receiver);
     YTKACEConsiderProductDisplayView(receiver, receiver.accessibilityIdentifier);
 }
 
@@ -2348,7 +2450,6 @@ static void YTKACEDisplayViewSetIdentifier(UIView *receiver,
         );
     }
     YTKACEApplyContentVisibility(receiver);
-    YTKACEHandleAdDisplayView(receiver);
     YTKACEConsiderProductDisplayView(receiver, identifier);
 }
 
